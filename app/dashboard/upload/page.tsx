@@ -35,6 +35,27 @@ export default function UploadPage() {
     const fetchUserRole = async () => {
       const supabase = createClient()
       const {
+        data: { session }
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        toast.error("Your session expired. Please log in again.")
+        setIsUploading(false)
+        return
+      }
+
+      const { data: refreshed, error: refreshError } =
+        await supabase.auth.refreshSession()
+      const accessToken =
+        refreshed.session?.access_token ?? session.access_token
+
+      if (refreshError || !accessToken) {
+        toast.error("Invalid session token. Please log out and log in again.")
+        setIsUploading(false)
+        return
+      }
+
+      const {
         data: { user }
       } = await supabase.auth.getUser()
 
@@ -151,8 +172,29 @@ export default function UploadPage() {
       const supabase = createClient()
 
       const {
+        data: { session }
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        toast.error("Your session expired. Please log in again.")
+        setIsUploading(false)
+        return
+      }
+
+      const { data: refreshed, error: refreshError } =
+        await supabase.auth.refreshSession()
+      const accessToken =
+        refreshed.session?.access_token ?? session.access_token
+
+      if (refreshError || !accessToken) {
+        toast.error("Invalid session token. Please log out and log in again.")
+        setIsUploading(false)
+        return
+      }
+
+      const {
         data: { user }
-      } = await supabase.auth.getUser()
+      } = await supabase.auth.getUser(accessToken)
 
       if (!user) {
         toast.error("You must be logged in to upload")
@@ -164,11 +206,45 @@ export default function UploadPage() {
       formData.append("file", file)
 
       const { data, error } = await supabase.functions.invoke("import-csv", {
-        body: formData
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
       })
 
       if (error) {
-        toast.error(error.message || "Upload failed")
+        let message = error.message || "Upload failed"
+        const context = (error as { context?: Response }).context
+
+        if (context) {
+          try {
+            const payload = await context.clone().json()
+            const serverMessage =
+              typeof payload?.error === "string"
+                ? payload.error
+                : typeof payload?.message === "string"
+                  ? payload.message
+                  : null
+
+            if (serverMessage) {
+              message = serverMessage
+            }
+          } catch {
+            try {
+              const text = await context.text()
+              if (text) message = text
+            } catch {
+              // Keep original message
+            }
+          }
+        }
+
+        if (message.toLowerCase().includes("invalid jwt")) {
+          toast.error("Invalid JWT. Please refresh the page and try again.")
+          return
+        }
+
+        toast.error(message)
         return
       }
 
@@ -177,8 +253,29 @@ export default function UploadPage() {
       )
       setFile(null)
       if (inputRef.current) inputRef.current.value = ""
-    } catch {
-      toast.error("Something went wrong. Please try again.")
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      const lower = raw.toLowerCase()
+
+      if (
+        lower.includes("jwt") ||
+        lower.includes("token") ||
+        lower.includes("auth")
+      ) {
+        toast.error("Auth error: please log out and log in again.")
+      } else if (
+        lower.includes("failed to send") ||
+        lower.includes("network") ||
+        lower.includes("fetch")
+      ) {
+        toast.error(
+          "Network error reaching Edge Function. Check connection and project URL."
+        )
+      } else {
+        toast.error(raw || "Upload failed")
+      }
+
+      console.error("CSV upload failed:", err)
     } finally {
       setIsUploading(false)
     }

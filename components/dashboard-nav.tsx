@@ -9,6 +9,7 @@ import {
   SidebarMenuItem
 } from "@/components/ui/sidebar"
 import {
+  Clock3,
   DoorOpen,
   FileText,
   Gavel,
@@ -64,6 +65,12 @@ const navItems = [
     title: "Rooms",
     href: "/dashboard/rooms",
     icon: DoorOpen,
+    separatorAfter: false
+  },
+  {
+    title: "Queues",
+    href: "/dashboard/queues",
+    icon: Clock3,
     separatorAfter: true
   },
   {

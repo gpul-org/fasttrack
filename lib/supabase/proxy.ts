@@ -49,6 +49,8 @@ export async function updateSession(request: NextRequest) {
 
   if (
     request.nextUrl.pathname !== "/" &&
+    !request.nextUrl.pathname.startsWith("/tv") &&
+    !request.nextUrl.pathname.startsWith("/my-queues") &&
     !user &&
     !request.nextUrl.pathname.startsWith("/login") &&
     !request.nextUrl.pathname.startsWith("/auth")
@@ -59,7 +61,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Check if authenticated user without role is trying to access dashboard
+  // Check if authenticated user is trying to access dashboard
   if (user && request.nextUrl.pathname.startsWith("/dashboard")) {
     const { data: profile } = await supabase
       .from("profiles")
@@ -72,6 +74,23 @@ export async function updateSession(request: NextRequest) {
       const url = request.nextUrl.clone()
       url.pathname = "/pending"
       return NextResponse.redirect(url)
+    }
+
+    // Redirect participants (no profile/no judge/admin role) to participant portal
+    // Check if user has a participant record (participants without role)
+    if (!profile?.role) {
+      const { data: participant } = await supabase
+        .from("participants")
+        .select("id")
+        .eq("id", user.sub)
+        .maybeSingle()
+
+      if (participant) {
+        // This is a participant trying to access admin dashboard
+        const url = request.nextUrl.clone()
+        url.pathname = "/my-queues"
+        return NextResponse.redirect(url)
+      }
     }
   }
 

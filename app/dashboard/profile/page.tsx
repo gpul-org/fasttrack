@@ -48,11 +48,15 @@ export default function ProfilePage() {
       setUser(user)
 
       if (user) {
-        const { data: profileData } = await supabase
+        const { data: profileData, error } = await supabase
           .from("profiles")
           .select("first_name, last_name, role")
           .eq("id", user.id)
-          .single()
+          .maybeSingle()
+
+        if (error) {
+          toast.error("Failed to load profile")
+        }
 
         setProfile(profileData)
         setFirstName(profileData?.first_name || "")

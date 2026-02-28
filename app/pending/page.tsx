@@ -39,7 +39,7 @@ export default function PendingPage() {
           .from("profiles")
           .select("first_name, last_name")
           .eq("id", user.id)
-          .single()
+          .maybeSingle()
 
         if (profile) {
           setFirstName(profile.first_name || "")
@@ -64,10 +64,35 @@ export default function PendingPage() {
           .from("profiles")
           .select("role")
           .eq("id", user.id)
-          .single()
+          .maybeSingle()
 
         if (profile?.role !== null) {
           router.push("/dashboard")
+          return
+        }
+
+        const normalizedEmail = user.email?.trim().toLowerCase()
+        if (normalizedEmail) {
+          const { data: participant } = await supabase
+            .from("participants")
+            .select("id, email")
+            .ilike("email", normalizedEmail)
+            .maybeSingle()
+
+          if (participant) {
+            router.push("/my-queues")
+            return
+          }
+
+          const { data: fuzzyMatches } = await supabase
+            .from("participants")
+            .select("id, email")
+            .ilike("email", `%${normalizedEmail}%`)
+
+          if (fuzzyMatches && fuzzyMatches.length > 0) {
+            router.push("/my-queues")
+            return
+          }
         }
       }
     }
@@ -88,11 +113,35 @@ export default function PendingPage() {
         .from("profiles")
         .select("role")
         .eq("id", user.id)
-        .single()
+        .maybeSingle()
 
       if (profile?.role !== null) {
         router.push("/dashboard")
       } else {
+        const normalizedEmail = user.email?.trim().toLowerCase()
+        if (normalizedEmail) {
+          const { data: participant } = await supabase
+            .from("participants")
+            .select("id, email")
+            .ilike("email", normalizedEmail)
+            .maybeSingle()
+
+          if (participant) {
+            router.push("/my-queues")
+            return
+          }
+
+          const { data: fuzzyMatches } = await supabase
+            .from("participants")
+            .select("id, email")
+            .ilike("email", `%${normalizedEmail}%`)
+
+          if (fuzzyMatches && fuzzyMatches.length > 0) {
+            router.push("/my-queues")
+            return
+          }
+        }
+
         toast.info("Still pending approval")
       }
     }

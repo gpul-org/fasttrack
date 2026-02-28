@@ -7,7 +7,6 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const token_hash = searchParams.get("token_hash")
   const type = searchParams.get("type") as EmailOtpType | null
-  const next = searchParams.get("next") ?? "/dashboard"
 
   if (token_hash && type) {
     const supabase = await createClient()
@@ -17,26 +16,33 @@ export async function GET(request: NextRequest) {
       token_hash
     })
     if (!error && data.user) {
-      // Check user's role and redirect accordingly
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", data.user.id)
-        .single()
+      const normalizedEmail = data.user.email?.trim().toLowerCase()
+      if (normalizedEmail) {
+        const { data: participant } = await supabase
+          .from("participants")
+          .select("id, email")
+          .ilike("email", normalizedEmail)
+          .maybeSingle()
 
-      if (profile?.role === null) {
-        // Pending approval
-        redirect("/pending")
-      } else {
-        // Judge or admin - go to dashboard
-        redirect(next)
+        if (participant) {
+          redirect("/my-queues")
+        }
+
+        const { data: fuzzyMatches } = await supabase
+          .from("participants")
+          .select("id, email")
+          .ilike("email", `%${normalizedEmail}%`)
+
+        if (fuzzyMatches && fuzzyMatches.length > 0) {
+          redirect("/my-queues")
+        }
       }
+
+      redirect("/pending")
     } else {
-      // redirect the user to an error page with some instructions
       redirect(`/auth/error?error=${error?.message}`)
     }
   }
 
-  // redirect the user to an error page with some instructions
   redirect(`/auth/error?error=No token hash or type`)
 }

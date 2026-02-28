@@ -110,3 +110,56 @@
     @apply bg-background text-foreground;
   }
 }
+
+.landing-gradient {
+  background-image:
+    radial-gradient(
+      circle at 12% 18%,
+      hsl(var(--chart-2) / 0.1),
+      transparent 44%
+    ),
+    radial-gradient(
+      circle at 88% 14%,
+      hsl(var(--chart-1) / 0.08),
+      transparent 42%
+    ),
+    radial-gradient(circle at 52% 86%, hsl(var(--ring) / 0.07), transparent 46%);
+  background-size: 140% 140%;
+  animation: landing-gradient-shift 36s ease-in-out infinite alternate;
+}
+
+.dark .landing-gradient {
+  background-image:
+    radial-gradient(
+      circle at 12% 18%,
+      hsl(var(--chart-2) / 0.06),
+      transparent 44%
+    ),
+    radial-gradient(
+      circle at 88% 14%,
+      hsl(var(--chart-1) / 0.05),
+      transparent 42%
+    ),
+    radial-gradient(circle at 52% 86%, hsl(var(--ring) / 0.06), transparent 46%);
+}
+
+@keyframes landing-gradient-shift {
+  0% {
+    background-position:
+      0% 0%,
+      100% 0%,
+      50% 100%;
+  }
+  100% {
+    background-position:
+      12% 14%,
+      86% 10%,
+      46% 88%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-gradient {
+    animation: none;
+  }
+}
