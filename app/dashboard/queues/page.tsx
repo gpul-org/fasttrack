@@ -533,9 +533,6 @@ export default function QueuesPage() {
   const [globalScheduleEndAt, setGlobalScheduleEndAt] = useState<string | null>(
     null
   )
-  const [showProjectDialog, setShowProjectDialog] = useState(false)
-  const [projectDialogSubmission, setProjectDialogSubmission] =
-    useState<Submission | null>(null)
   const [waitingBlockersByEntryId, setWaitingBlockersByEntryId] = useState<
     Record<string, QueueBlockReason>
   >({})
@@ -2483,11 +2480,6 @@ export default function QueuesPage() {
     }
   }
 
-  const openProjectDetails = (submission: Submission) => {
-    setProjectDialogSubmission(submission)
-    setShowProjectDialog(true)
-  }
-
   const getQueueBlockersBySubmission = useCallback(
     async (submissionIds: string[]) => {
       const blockers = new Map<string, QueueBlockReason>()
@@ -4215,15 +4207,6 @@ export default function QueuesPage() {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            openProjectDetails(currentEntry.submissions)
-                          }
-                        >
-                          Open full project
-                        </Button>
                         {currentEntry.submissions.repo_url && (
                           <Button variant="outline" size="sm" asChild>
                             <a
@@ -4852,120 +4835,6 @@ export default function QueuesPage() {
               )}
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showProjectDialog} onOpenChange={setShowProjectDialog}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {projectDialogSubmission
-                ? `Project #${projectDialogSubmission.number} · ${projectDialogSubmission.title || "Untitled"}`
-                : "Project details"}
-            </DialogTitle>
-            <DialogDescription>
-              Full project view for judges without leaving the queue screen.
-            </DialogDescription>
-          </DialogHeader>
-
-          {projectDialogSubmission && (
-            <div className="space-y-4 text-sm">
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">Links</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" asChild>
-                    <a
-                      href={projectDialogSubmission.devpost_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      DevPost
-                    </a>
-                  </Button>
-                  {projectDialogSubmission.repo_url && (
-                    <Button variant="outline" size="sm" asChild>
-                      <a
-                        href={projectDialogSubmission.repo_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Repository
-                      </a>
-                    </Button>
-                  )}
-                  {projectDialogSubmission.demo_url && (
-                    <Button variant="outline" size="sm" asChild>
-                      <a
-                        href={projectDialogSubmission.demo_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Demo
-                      </a>
-                    </Button>
-                  )}
-                  {projectDialogSubmission.video_url && (
-                    <Button variant="outline" size="sm" asChild>
-                      <a
-                        href={projectDialogSubmission.video_url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Video
-                      </a>
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">Challenges</p>
-                <div className="flex flex-wrap gap-2">
-                  {projectDialogSubmission.prizes.length > 0 ? (
-                    projectDialogSubmission.prizes.map((keyword, index) => (
-                      <Badge key={`${keyword}-${index}`} variant="secondary">
-                        {keyword}
-                      </Badge>
-                    ))
-                  ) : (
-                    <Badge variant="outline">No challenge keywords</Badge>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">Participants</p>
-                {projectDialogSubmission.submission_participants.length ===
-                0 ? (
-                  <p className="text-muted-foreground">
-                    No participants linked
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {projectDialogSubmission.submission_participants.map(
-                      (participant) => {
-                        const fullName = [
-                          participant.participants.first_name,
-                          participant.participants.last_name
-                        ]
-                          .filter(Boolean)
-                          .join(" ")
-
-                        return (
-                          <li key={participant.participant_id}>
-                            {fullName || participant.participants.email}
-                            {fullName
-                              ? ` · ${participant.participants.email}`
-                              : ""}
-                          </li>
-                        )
-                      }
-                    )}
-                  </ul>
-                )}
-              </div>
-            </div>
-          )}
         </DialogContent>
       </Dialog>
 

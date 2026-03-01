@@ -39,25 +39,42 @@ export async function getMembers(): Promise<Map<string, string>> {
 let memberMap: Map<string, string> | null
 export async function sendMessage(
   message: string,
-  participants: string[],
+  participants: Array<string | { handle: string; name?: string }>,
   embed?: DiscordEmbedPayload
 ) {
   if (!memberMap) {
     memberMap = await getMembers()
   }
 
-  const memberIds = participants
-    .map((participant) => participant.trim())
-    .filter(Boolean)
-    .map((participant) => memberMap!.get(participant))
-    .filter((memberId): memberId is string => Boolean(memberId))
+  const normalized = participants
+    .map((p) =>
+      typeof p === "string"
+        ? { handle: p.trim(), name: p.trim() }
+        : { handle: p.handle.trim(), name: (p.name || p.handle).trim() }
+    )
+    .filter((p) => p.handle)
 
-  const uniqueMemberIds = Array.from(new Set(memberIds))
-  const mention = uniqueMemberIds.map((memberId) => `<@${memberId}>`)
-
-  if (mention.length === 0) {
+  if (normalized.length === 0) {
     return
   }
+
+  const mentionStrings: string[] = []
+  const nameFallbacks: string[] = []
+  const resolvedIds: string[] = []
+
+  for (const p of normalized) {
+    const memberId = memberMap!.get(p.handle)
+    if (memberId) {
+      if (!resolvedIds.includes(memberId)) {
+        resolvedIds.push(memberId)
+        mentionStrings.push(`<@${memberId}>`)
+      }
+    } else {
+      nameFallbacks.push(p.handle)
+    }
+  }
+
+  const allAddressees = [...mentionStrings, ...nameFallbacks]
 
   const embedPayload = {
     title:
@@ -93,7 +110,7 @@ export async function sendMessage(
         : [
             {
               name: "Alert for",
-              value: mention.join(" "),
+              value: allAddressees.join(" "),
               inline: false
             }
           ],
@@ -106,10 +123,10 @@ export async function sendMessage(
 
   await rest.post(Routes.channelMessages(process.env.DISCORD_CHANNEL!), {
     body: {
-      content: `Alert for: ${mention.join(" ")}`,
+      content: `Alert for: ${allAddressees.join(" ")}`,
       embeds: [embedPayload],
       allowed_mentions: {
-        users: uniqueMemberIds
+        users: resolvedIds
       }
     }
   })
