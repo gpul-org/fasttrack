@@ -136,20 +136,24 @@ Deno.serve(async (req) => {
         continue
       }
 
-      const prize = (row[COL.OPT_IN_PRIZE] || "").trim()
+      // Split comma-separated prizes and trim each one
+      const rowPrizes = (row[COL.OPT_IN_PRIZE] || "")
+        .split(",")
+        .map((p: string) => p.trim())
+        .filter((p: string) => p.length > 0)
       const repoUrl = (row[COL.GIT_LINK] || "").trim()
       const demoUrl = (row[COL.DEPLOY_LINK] || "").trim()
       const videoUrl = (row[COL.VIDEO_DEMO_LINK] || "").trim()
 
       if (submissionsMap.has(submissionUrl)) {
         const existing = submissionsMap.get(submissionUrl)!
-        if (prize && !existing.prizes.includes(prize)) {
-          existing.prizes.push(prize)
+        for (const p of rowPrizes) {
+          if (!existing.prizes.includes(p)) existing.prizes.push(p)
         }
       } else {
-        const prizes = ["GENERAL"]
-        if (prize && prize !== "GENERAL") {
-          prizes.push(prize)
+        const prizes = ["GPUL"]
+        for (const p of rowPrizes) {
+          if (p !== "GPUL" && !prizes.includes(p)) prizes.push(p)
         }
         submissionsMap.set(submissionUrl, {
           title: projectTitle,
