@@ -136,10 +136,10 @@ Deno.serve(async (req) => {
         continue
       }
 
-      // Split comma-separated prizes and trim each one
+      // Split comma-separated prizes, trim each one, and keep only the first word
       const rowPrizes = (row[COL.OPT_IN_PRIZE] || "")
         .split(",")
-        .map((p: string) => p.trim())
+        .map((p: string) => p.trim().split(/\s+/)[0])
         .filter((p: string) => p.length > 0)
       const repoUrl = (row[COL.GIT_LINK] || "").trim()
       const demoUrl = (row[COL.DEPLOY_LINK] || "").trim()
