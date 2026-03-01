@@ -24,7 +24,7 @@ export default function Home() {
         </nav>
         <div className="flex max-w-5xl flex-1 flex-col items-center justify-center p-5">
           <div className="w-full space-y-8 py-6 md:py-10">
-            <div className="mx-auto max-w-2xl space-y-3 text-center">
+            <div className="mx-auto max-w-4xl space-y-3 text-center">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 HackUDC 2026
               </p>
@@ -35,24 +35,25 @@ export default function Home() {
                 Queueing for Hackathon Judging
               </p>
               <p className="text-sm text-muted-foreground md:text-base">
-                Consulta tu estado en cola con tu email. Jueces y admins acceden
-                con login.
+                Look up your place in all judging queues.
               </p>
 
               <div className="pt-2">
                 <form
                   action="/my-queues"
                   method="get"
-                  className="mx-auto flex w-full max-w-xl flex-col gap-2 sm:flex-row"
+                  className="mx-auto flex w-full max-w-4xl flex-col gap-2 sm:flex-row sm:justify-center"
                 >
                   <input
                     type="email"
                     name="email"
-                    placeholder="Introduce tu email para ver tu cola"
+                    placeholder="Enter your email to see your queue"
                     required
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background sm:min-w-[32rem] sm:flex-1"
                   />
-                  <Button type="submit">Ver mi cola</Button>
+                  <Button type="submit" className="shrink-0">
+                    My queue
+                  </Button>
                 </form>
               </div>
 

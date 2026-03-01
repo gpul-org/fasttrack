@@ -102,6 +102,7 @@ function normalizeTag(value: string | null | undefined): string {
 }
 
 function formatDuration(minutes: number): string {
+  if (minutes > 0 && minutes < 1) return "< 1 min"
   const safe = Math.max(0, Math.round(minutes))
   const hours = Math.floor(safe / 60)
   const restMinutes = safe % 60
@@ -248,7 +249,6 @@ export default function MyQueuesClient() {
   const [resolvedEmail, setResolvedEmail] = useState(emailFromQuery)
 
   const [loading, setLoading] = useState(false)
-  const [, setRefreshing] = useState(false)
   const [participantFound, setParticipantFound] = useState(true)
   const latestFetchIdRef = useRef(0)
 
@@ -297,9 +297,6 @@ export default function MyQueuesClient() {
 
       if (showLoading) {
         setLoading(true)
-        setRefreshing(false)
-      } else {
-        setRefreshing(true)
       }
 
       try {
@@ -506,7 +503,6 @@ export default function MyQueuesClient() {
       } finally {
         if (fetchId !== latestFetchIdRef.current) return
         setLoading(false)
-        setRefreshing(false)
       }
     },
     [resolvedEmail, supabase]
@@ -687,9 +683,7 @@ export default function MyQueuesClient() {
         } else if (ownEntry.status === "waiting") {
           etaMinutes = Math.max(
             0,
-            Math.round(
-              (aheadCount * effectiveMinutesPerTeam) / parallelCapacity
-            )
+            (aheadCount * effectiveMinutesPerTeam) / parallelCapacity
           )
         }
 
@@ -853,9 +847,11 @@ export default function MyQueuesClient() {
                         <div className="flex items-start justify-between gap-3">
                           <div className="space-y-1">
                             <p className="font-medium text-foreground">
-                              {isMultiRoom
-                                ? "Challenge pool"
-                                : summary.roomName || "Room"}
+                              {isNextInLine
+                                ? "Assigned room"
+                                : isMultiRoom
+                                  ? "Challenge pool"
+                                  : summary.roomName || "Room"}
                             </p>
                             {summary.challengeTag ? (
                               <Badge>{summary.challengeTag}</Badge>
@@ -865,18 +861,34 @@ export default function MyQueuesClient() {
 
                         <div className="mt-3">
                           <p className="text-xs text-muted-foreground">
-                            {isMultiRoom ? "Possible rooms" : "Room"}
+                            {isNextInLine
+                              ? "Room assigned"
+                              : isMultiRoom
+                                ? "Possible rooms"
+                                : "Room"}
                           </p>
                           <div className="mt-1 flex flex-wrap gap-1.5">
-                            {possibleRooms.map((room) => (
+                            {isNextInLine ? (
                               <Badge
-                                key={room}
-                                variant="secondary"
-                                className="font-normal"
+                                key={summary.assignedRoomName ?? "room"}
+                                variant="destructive"
+                                className="font-semibold"
                               >
-                                {room}
+                                {summary.assignedRoomName ??
+                                  summary.roomName ??
+                                  "—"}
                               </Badge>
-                            ))}
+                            ) : (
+                              possibleRooms.map((room) => (
+                                <Badge
+                                  key={room}
+                                  variant="secondary"
+                                  className="font-normal"
+                                >
+                                  {room}
+                                </Badge>
+                              ))
+                            )}
                           </div>
                         </div>
                       </div>
@@ -901,9 +913,14 @@ export default function MyQueuesClient() {
                               </Badge>
                             ) : null}
                             {isNextInLine ? (
-                              <p className="mt-3 text-xl font-bold leading-tight text-destructive">
-                                {nextInLineHeadline}
-                              </p>
+                              <>
+                                <p className="mt-3 text-xl font-bold leading-tight text-destructive">
+                                  {nextInLineHeadline}
+                                </p>
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  Wait at the door until you are called in.
+                                </p>
+                              </>
                             ) : (
                               <p className="mt-3 text-3xl font-bold leading-none text-foreground">
                                 {summary.queuePosition ?? "—"}

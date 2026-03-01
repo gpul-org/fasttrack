@@ -9,6 +9,7 @@ const corsHeaders = {
 
 interface WebhookPayload {
   notification_type?: "called" | "near_buffer"
+  queue_position?: number
   type: "INSERT" | "UPDATE" | "DELETE"
   table: string
   record: {
@@ -208,19 +209,29 @@ Deno.serve(async (req) => {
       )
     }
 
+    const queuePosition = typeof webhookPayload.queue_position === "number" ? webhookPayload.queue_position : null
+
+    const nearBufferTitle = queuePosition === 1
+      ? `You're next – get ready at ${room.name}`
+      : `Heads up – you're #${queuePosition ?? "?"} in queue at ${room.name}`
+    const nearBufferBody = queuePosition === 1
+      ? `Team #${submission.number}: move to the door of room ${room.name} now.`
+      : `Team #${submission.number}: start heading to floor 3, you're #${queuePosition ?? "?"} in queue.`
+
     const pushPayload = JSON.stringify({
       title:
         notificationType === "near_buffer"
-          ? `You are next up in ${room.name}`
-          : `Your team is in the buffer for ${room.name}`,
+          ? nearBufferTitle
+          : `Your team has been called to ${room.name}`,
       body:
         notificationType === "near_buffer"
-          ? `Team #${submission.number} should be ready to present soon.`
-          : `Team #${submission.number} has been called to the buffer.`,
+          ? nearBufferBody
+          : `Team #${submission.number}: go to room ${room.name} and wait at the door.`,
       data: {
         roomId: webhookPayload.record.room_id,
         submissionId: webhookPayload.record.submission_id,
-        notificationType
+        notificationType,
+        queuePosition
       }
     })
 

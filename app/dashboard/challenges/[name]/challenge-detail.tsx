@@ -50,6 +50,8 @@ interface Submission {
   number: number
   title: string | null
   devpost_url: string
+  repo_url: string | null
+  demo_url: string | null
   prizes: string[]
   submission_participants: {
     participant_id: string

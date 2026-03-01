@@ -21,6 +21,42 @@ import { Pencil, Plus, RefreshCw, Trash2, Users } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
+function extractErrorMessage(error: unknown): string {
+  if (!error) return "Unknown error"
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === "object") {
+    const candidate = error as {
+      message?: unknown
+      details?: unknown
+      hint?: unknown
+      code?: unknown
+      error_description?: unknown
+      error?: unknown
+    }
+
+    const parts = [
+      candidate.message,
+      candidate.details,
+      candidate.hint,
+      candidate.error_description,
+      candidate.error,
+      candidate.code
+    ]
+      .map((value) =>
+        typeof value === "string" ? value.trim() : String(value || "").trim()
+      )
+      .filter(Boolean)
+
+    if (parts.length > 0) return parts.join(" | ")
+  }
+
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
 export default function RoomsPage() {
   const [rooms, setRooms] = useState<Room[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
@@ -46,8 +82,26 @@ export default function RoomsPage() {
     ])
 
     if (roomsResult.error) {
-      toast.error("Failed to fetch rooms")
-      console.error(roomsResult.error)
+      const message = extractErrorMessage(roomsResult.error)
+      const fallbackResult = await supabase
+        .from("rooms")
+        .select("id, name")
+        .order("name")
+
+      if (fallbackResult.error) {
+        toast.error(`Failed to fetch rooms: ${message}`)
+      } else {
+        const fallbackRooms = (fallbackResult.data || []).map((room) => ({
+          id: room.id,
+          name: room.name,
+          judges: [],
+          challenges: []
+        })) as Room[]
+        setRooms(fallbackRooms)
+        toast.warning(`Loaded basic rooms only (relations failed): ${message}`)
+      }
+
+      console.error("Failed to fetch rooms:", message, roomsResult.error)
     } else {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw: any[] = roomsResult.data || []
@@ -101,8 +155,9 @@ export default function RoomsPage() {
     setIsDeleting(false)
 
     if (error) {
-      toast.error("Failed to delete room")
-      console.error(error)
+      const message = extractErrorMessage(error)
+      toast.error(`Failed to delete room: ${message}`)
+      console.error("Failed to delete room:", message, error)
       return
     }
 

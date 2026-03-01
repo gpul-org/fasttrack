@@ -36,7 +36,9 @@ import { createClient } from "@/lib/supabase/client"
 import {
   ArrowUpToLine,
   Clock3,
+  Download,
   FastForward,
+  Loader2,
   Plus,
   RefreshCw,
   SkipForward
@@ -72,6 +74,9 @@ interface SubmissionParticipant {
     first_name: string | null
     last_name: string | null
     email: string
+    discord_username?: string | null
+    discord_user?: string | null
+    discord?: string | null
   }
 }
 
@@ -205,6 +210,22 @@ interface ReviewDraft {
   updatedAt: number
 }
 
+interface DiscordEmbedField {
+  name: string
+  value: string
+  inline?: boolean
+}
+
+interface DiscordEmbedPayload {
+  title: string
+  description?: string
+  color?: number
+  fields?: DiscordEmbedField[]
+  footer?: {
+    text: string
+  }
+}
+
 function formatTimeNoSeconds(date: Date): string {
   return date.toLocaleTimeString([], {
     hour: "2-digit",
@@ -213,11 +234,24 @@ function formatTimeNoSeconds(date: Date): string {
 }
 
 function formatMinutesToHm(totalMinutes: number): string {
+  if (totalMinutes > 0 && totalMinutes < 1) return "< 1 min"
   const minutes = Math.max(0, Math.round(totalMinutes))
   if (minutes < 60) return `${minutes} min`
   const hours = Math.floor(minutes / 60)
   const restMinutes = minutes % 60
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
+}
+
+function calculateMaxMinutesPerTeam(
+  availableMinutes: number | null,
+  teamsCount: number,
+  parallelRooms: number
+): number | null {
+  if (availableMinutes === null || teamsCount <= 0) return null
+  if (!Number.isFinite(availableMinutes) || availableMinutes <= 0) return null
+
+  const safeParallelRooms = Math.max(1, Math.floor(parallelRooms))
+  return (availableMinutes * safeParallelRooms) / teamsCount
 }
 
 function formatDigitalDurationFromSeconds(totalSeconds: number): string {
@@ -420,6 +454,21 @@ function normalizeQueueReviews(raw: unknown): QueueReview[] {
   })
 }
 
+function _getDiscordHandleFromParticipant(
+  participant: SubmissionParticipant["participants"]
+): string | null {
+  const value =
+    participant.discord_username ||
+    participant.discord_user ||
+    participant.discord ||
+    null
+
+  if (!value) return null
+
+  const normalized = value.trim()
+  return normalized.length > 0 ? normalized : null
+}
+
 export default function QueuesPage() {
   const supabase = useMemo(() => createClient(), [])
   const [loading, setLoading] = useState(true)
@@ -442,6 +491,14 @@ export default function QueuesPage() {
 
   const [showCallGroupDialog, setShowCallGroupDialog] = useState(false)
   const [showReviewedDialog, setShowReviewedDialog] = useState(false)
+  const [_reviewedEditMode, setReviewedEditMode] = useState(false)
+  const [reviewedEditScore, _setReviewedEditScore] = useState("0")
+  const [reviewedEditNotes, _setReviewedEditNotes] = useState("")
+  const [reviewedEditAnswers, _setReviewedEditAnswers] = useState<
+    ReviewAnswer[]
+  >([])
+  const [_isSavingReviewedEdit, setIsSavingReviewedEdit] = useState(false)
+  const [isExportingReviews, setIsExportingReviews] = useState(false)
   const [groupSearch, setGroupSearch] = useState("")
   const [reviewedSearch, setReviewedSearch] = useState("")
   const [reviewedScope, setReviewedScope] = useState<"room" | "challenge">(
@@ -493,21 +550,324 @@ export default function QueuesPage() {
   const applyingRemoteReviewDraftRef = useRef(false)
   const notifiedNearTopEntryIdsRef = useRef<Set<string>>(new Set())
 
+  const sendDiscordViaApi = useCallback(
+    async ({
+      message,
+      participants,
+      submissionId,
+      embed
+    }: {
+      message: string
+      participants?: string[]
+      submissionId?: string
+      embed?: DiscordEmbedPayload
+    }) => {
+      const response = await fetch("/api/discord/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message,
+          participants,
+          submissionId,
+          embed
+        })
+      })
+
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(
+          typeof body?.error === "string" ? body.error : "Discord send failed"
+        )
+      }
+
+      return body as { ok: boolean; sent?: boolean; count?: number }
+    },
+    []
+  )
+
+  const buildDiscordNotificationPayload = useCallback(
+    (
+      event: "queue_near_top" | "entered_buffer" | "presentation_now",
+      payload: Record<string, unknown>
+    ) => {
+      const roomId = typeof payload.roomId === "string" ? payload.roomId : null
+      const fallbackContext = {
+        roomScopeLabel: "the assigned room",
+        challengeLabel: "the assigned challenge",
+        parallelRoomCount: 1,
+        desiredMinutesPerTeam: DEFAULT_DESIRED_MINUTES_PER_TEAM
+      }
+
+      const context = (() => {
+        if (!roomId) return fallbackContext
+
+        const baseRoom = allRooms.find((room) => room.id === roomId)
+        if (!baseRoom) return fallbackContext
+
+        const poolRooms = allRooms
+          .filter((room) => roomsShareQueuePool(baseRoom, room))
+          .sort((a, b) => a.name.localeCompare(b.name))
+
+        const roomNames = poolRooms.map((room) => room.name)
+        const roomScopeLabel =
+          roomNames.length <= 1
+            ? roomNames[0]
+              ? `room ${roomNames[0]}`
+              : fallbackContext.roomScopeLabel
+            : `rooms ${roomNames.join(" or ")}`
+
+        const challengeTitles = Array.from(
+          new Set(
+            poolRooms
+              .flatMap((room) =>
+                room.room_challenges
+                  .map((item) => item.challenges.title?.trim() || "")
+                  .filter(Boolean)
+              )
+              .filter(Boolean)
+          )
+        )
+
+        const challengeLabel =
+          challengeTitles.length > 0
+            ? challengeTitles.join(" / ")
+            : fallbackContext.challengeLabel
+
+        const readyRoomCount = poolRooms.filter(
+          (room) => roomQueueStateByRoom[room.id]?.is_ready
+        ).length
+        const parallelRoomCount = Math.max(1, readyRoomCount)
+        const desiredMinutesPerTeam = Math.max(
+          1,
+          roomQueueStateByRoom[roomId]?.desired_minutes_per_team ??
+            DEFAULT_DESIRED_MINUTES_PER_TEAM
+        )
+
+        return {
+          roomScopeLabel,
+          challengeLabel,
+          parallelRoomCount,
+          desiredMinutesPerTeam
+        }
+      })()
+
+      const teamNumberRaw =
+        typeof payload.teamNumber === "number"
+          ? payload.teamNumber
+          : Number(payload.teamNumber)
+      const teamNumber =
+        Number.isFinite(teamNumberRaw) && teamNumberRaw > 0
+          ? Math.floor(teamNumberRaw)
+          : null
+      const teamTitle =
+        typeof payload.teamTitle === "string" && payload.teamTitle.trim().length
+          ? payload.teamTitle.trim()
+          : null
+      const teamLabel = teamNumber
+        ? `#${teamNumber}${teamTitle ? ` · ${teamTitle}` : ""}`
+        : teamTitle || "sin número"
+      const safeChallenge = context.challengeLabel || "Assigned challenge"
+      const safeRoomScope = context.roomScopeLabel || "assigned room"
+      const roomActionLabel =
+        context.parallelRoomCount > 1
+          ? `Any of: ${safeRoomScope}`
+          : safeRoomScope
+
+      const baseFields: DiscordEmbedField[] = [
+        {
+          name: "Team",
+          value: `**${teamLabel}**`,
+          inline: true
+        },
+        {
+          name: "Challenge",
+          value: `**${safeChallenge}**`,
+          inline: true
+        },
+        {
+          name: "Rooms",
+          value: `\`\`\`txt\n${roomActionLabel}\n\`\`\``,
+          inline: false
+        }
+      ]
+
+      if (event === "queue_near_top") {
+        const queuePositionRaw =
+          typeof payload.queuePosition === "number"
+            ? payload.queuePosition
+            : Number(payload.queuePosition)
+        const queuePosition =
+          Number.isFinite(queuePositionRaw) && queuePositionRaw > 0
+            ? Math.floor(queuePositionRaw)
+            : 1
+
+        const etaMinutes = Math.max(
+          1,
+          Math.round(
+            (queuePosition * context.desiredMinutesPerTeam) /
+              context.parallelRoomCount
+          )
+        )
+
+        return {
+          message: `Queue alert for ${teamLabel}: position ${queuePosition}, ETA ${formatMinutesToHm(etaMinutes)}.`,
+          embed: {
+            title: "⏳ Upcoming turn",
+            description: "Your team is getting close to presentation time.",
+            color: 0xf59e0b,
+            fields: [
+              ...baseFields,
+              {
+                name: "Queue position",
+                value: `**#${queuePosition}**`,
+                inline: true
+              },
+              {
+                name: "Estimated ETA",
+                value: `**${formatMinutesToHm(etaMinutes)}**`,
+                inline: true
+              },
+              {
+                name: "Next step",
+                value:
+                  "```txt\nStart getting your team ready and head to floor 3.\n```",
+                inline: false
+              }
+            ],
+            footer: {
+              text: "FastTrack · Automatic notification"
+            }
+          }
+        }
+      }
+
+      if (event === "entered_buffer") {
+        return {
+          message: `Buffer alert for ${teamLabel}: wait at ${safeRoomScope}.`,
+          embed: {
+            title: "📣 Team called to buffer",
+            description: "Your team is in the final stage before presenting.",
+            color: 0x2563eb,
+            fields: [
+              ...baseFields,
+              {
+                name: "Instruction",
+                value:
+                  "```txt\nPlease wait at the room door until you are called in.\n```",
+                inline: false
+              }
+            ],
+            footer: {
+              text: "FastTrack · Automatic notification"
+            }
+          }
+        }
+      }
+
+      return {
+        message: `Presentation alert for ${teamLabel}: it is your turn now.`,
+        embed: {
+          title: "🎤 It is your turn",
+          description:
+            "Enter the room now: your presentation starts immediately.",
+          color: 0xdc2626,
+          fields: [
+            ...baseFields,
+            {
+              name: "Immediate action",
+              value:
+                "```txt\nGo into the room now and begin your presentation.\n```",
+              inline: false
+            }
+          ],
+          footer: {
+            text: "FastTrack · Automatic notification"
+          }
+        }
+      }
+    },
+    [allRooms, roomQueueStateByRoom]
+  )
+
+  const sendQueueDiscordNotification = useCallback(
+    async (
+      event: "queue_near_top" | "entered_buffer" | "presentation_now",
+      payload: Record<string, unknown>
+    ) => {
+      const submissionId =
+        typeof payload.submissionId === "string" ? payload.submissionId : null
+
+      if (!submissionId) {
+        console.warn(
+          `[NOTIFICATION_HOOK][DISCORD][${event}] Missing submissionId`,
+          payload
+        )
+        return
+      }
+
+      try {
+        const { message, embed } = buildDiscordNotificationPayload(
+          event,
+          payload
+        )
+        const result = await sendDiscordViaApi({
+          message,
+          submissionId,
+          embed
+        })
+
+        console.log(
+          `[NOTIFICATION_HOOK][DISCORD][${event}] Mensaje enviado`,
+          result
+        )
+      } catch (error) {
+        console.error(
+          `[NOTIFICATION_HOOK][DISCORD][${event}] Error enviando mensaje`,
+          error
+        )
+      }
+    },
+    [buildDiscordNotificationPayload, sendDiscordViaApi]
+  )
+
   const logNotificationHook = useCallback(
     (
       event: "queue_near_top" | "entered_buffer" | "presentation_now",
       payload: Record<string, unknown>
     ) => {
-      console.log(
-        `[NOTIFICATION_HOOK][DISCORD][${event}] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE DISCORD`,
-        payload
-      )
-      console.log(
-        `[NOTIFICATION_HOOK][EMAIL][${event}] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE EMAIL`,
-        payload
-      )
+      switch (event) {
+        case "queue_near_top":
+          void sendQueueDiscordNotification(event, payload)
+          console.log(
+            "[NOTIFICATION_HOOK][EMAIL][queue_near_top] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE EMAIL",
+            payload
+          )
+          break
+        case "entered_buffer":
+          void sendQueueDiscordNotification(event, payload)
+          console.log(
+            "[NOTIFICATION_HOOK][EMAIL][entered_buffer] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE EMAIL",
+            payload
+          )
+          break
+        case "presentation_now":
+          void sendQueueDiscordNotification(event, payload)
+          console.log(
+            "[NOTIFICATION_HOOK][DISCORD][presentation_now] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE DISCORD",
+            payload
+          )
+          console.log(
+            "[NOTIFICATION_HOOK][EMAIL][presentation_now] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE EMAIL",
+            payload
+          )
+          break
+        default:
+          console.log("[NOTIFICATION_HOOK] Unknown event", { event, payload })
+      }
     },
-    []
+    [sendQueueDiscordNotification]
   )
 
   const fetchBase = useCallback(async () => {
@@ -854,6 +1214,7 @@ export default function QueuesPage() {
             queueEntryId: entry.id,
             submissionId: entry.submission_id,
             teamNumber: entry.submissions.number,
+            teamTitle: entry.submissions.title,
             queuePosition: index + 1,
             threshold: NOTIFICATION_TOP_QUEUE_THRESHOLD
           })
@@ -1271,6 +1632,10 @@ export default function QueuesPage() {
     )
   }, [reviewedEntries, selectedReviewedEntryId])
 
+  useEffect(() => {
+    setReviewedEditMode(false)
+  }, [selectedReviewedEntryId])
+
   const activeReviewEntry = currentEntry || null
   const reviewingPastTeam = false
   const activeReviewEntryId = activeReviewEntry?.id || null
@@ -1408,9 +1773,12 @@ export default function QueuesPage() {
   const effectiveTeamsForSchedule = totalCount
 
   const initialMaxMinutesPerTeam = useMemo(() => {
-    if (!scheduleWindowMinutes || effectiveTeamsForSchedule <= 0) return null
-    return scheduleWindowMinutes / effectiveTeamsForSchedule
-  }, [effectiveTeamsForSchedule, scheduleWindowMinutes])
+    return calculateMaxMinutesPerTeam(
+      scheduleWindowMinutes,
+      effectiveTeamsForSchedule,
+      parallelRoomCount
+    )
+  }, [effectiveTeamsForSchedule, parallelRoomCount, scheduleWindowMinutes])
 
   const remainingCount = activeSubmissionCount
   const configuredDesiredMinutesPerTeam =
@@ -1422,21 +1790,34 @@ export default function QueuesPage() {
   const scheduleRemainingMinutes = useMemo(() => {
     if (!globalScheduleEndAt || !nowMs) return null
     const endMs = new Date(globalScheduleEndAt).getTime()
-    return Math.max(0, (endMs - nowMs) / 60000)
-  }, [globalScheduleEndAt, nowMs])
+    if (Number.isNaN(endMs)) return null
+
+    const startMs = globalScheduleStartAt
+      ? new Date(globalScheduleStartAt).getTime()
+      : null
+
+    const anchorMs =
+      startMs !== null && Number.isFinite(startMs)
+        ? Math.max(nowMs, startMs)
+        : nowMs
+
+    return Math.max(0, (endMs - anchorMs) / 60000)
+  }, [globalScheduleEndAt, globalScheduleStartAt, nowMs])
 
   const dynamicMaxMinutesPerTeam = useMemo(() => {
-    if (scheduleRemainingMinutes === null || estimatedRemainingTeams <= 0)
-      return null
-    return scheduleRemainingMinutes / estimatedRemainingTeams
-  }, [estimatedRemainingTeams, scheduleRemainingMinutes])
+    return calculateMaxMinutesPerTeam(
+      scheduleRemainingMinutes,
+      estimatedRemainingTeams,
+      parallelRoomCount
+    )
+  }, [estimatedRemainingTeams, parallelRoomCount, scheduleRemainingMinutes])
 
   const maxMinutesPerTeam = dynamicMaxMinutesPerTeam ?? initialMaxMinutesPerTeam
   const maxMinutesPerTeamLabel = useMemo(() => {
     if (maxMinutesPerTeam === null || maxMinutesPerTeam === undefined)
       return null
     if (maxMinutesPerTeam <= 0) return "0 min"
-    return formatMinutesToHm(Math.max(1, maxMinutesPerTeam))
+    return formatMinutesToHm(maxMinutesPerTeam)
   }, [maxMinutesPerTeam])
 
   const estimatedMinutesPerTeam = useMemo(() => {
@@ -1768,6 +2149,134 @@ export default function QueuesPage() {
     [supabase]
   )
 
+  const handleExportReviewsCSV = useCallback(async () => {
+    setIsExportingReviews(true)
+    try {
+      const questions = activeChallenge?.questions ?? []
+      const challengeName =
+        activeChallenge?.keyword || activeChallenge?.title || "challenge"
+
+      const headers = [
+        "Challenge",
+        "Number",
+        "Title",
+        "GitHub URL",
+        "Demo URL",
+        "Participants",
+        "Score",
+        "Notes",
+        ...questions.map((q) => q.label)
+      ]
+
+      const escapeCell = (cell: string) => {
+        if (cell.includes(",") || cell.includes('"') || cell.includes("\n")) {
+          return `"${cell.replace(/"/g, '""')}"`
+        }
+        return cell
+      }
+
+      const rows: string[][] = [headers]
+
+      for (const entry of reviewedBaseEntries) {
+        const review =
+          reviewedScope === "challenge"
+            ? entry.queue_reviews?.[0]
+            : (entry.queue_reviews?.find((r) => r.judge_id === userId) ??
+              entry.queue_reviews?.[0])
+
+        const participantsStr = entry.submissions.submission_participants
+          .map((sp) => {
+            const p = sp.participants
+            const fullName =
+              [p.first_name, p.last_name].filter(Boolean).join(" ") || "\u2014"
+            return `${fullName} <${p.email}>`
+          })
+          .join("; ")
+
+        const answers = Array.isArray(review?.answers) ? review.answers : []
+
+        rows.push([
+          challengeName,
+          String(entry.submissions.number),
+          entry.submissions.title ?? "Untitled",
+          entry.submissions.repo_url ?? "",
+          entry.submissions.demo_url ?? "",
+          participantsStr,
+          review ? String(review.score) : "",
+          review?.notes ?? "",
+          ...questions.map((q) => {
+            const ans = answers.find((a) => a.label === q.label)
+            return ans ? String(ans.value ?? "") : ""
+          })
+        ])
+      }
+
+      const csvContent = rows
+        .map((row) => row.map(escapeCell).join(","))
+        .join("\n")
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `${challengeName}-reviews.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      toast.success("CSV exported")
+    } catch (err) {
+      toast.error("Failed to export CSV")
+      console.error(err)
+    }
+    setIsExportingReviews(false)
+  }, [activeChallenge, reviewedBaseEntries, reviewedScope, userId])
+
+  const _handleSaveReviewedEdit = useCallback(async () => {
+    if (!selectedReviewedEntry || !userId) return
+    setIsSavingReviewedEdit(true)
+    try {
+      const score = Number(reviewedEditScore)
+      if (Number.isNaN(score) || score < 0 || score > 10) {
+        toast.error("Score must be between 0 and 10")
+        setIsSavingReviewedEdit(false)
+        return
+      }
+      const { error, readOnly } = await saveQueueReview({
+        queueEntryId: selectedReviewedEntry.id,
+        judgeId: userId,
+        score,
+        notes: reviewedEditNotes.trim() || null,
+        answers: reviewedEditAnswers
+      })
+      if (readOnly) {
+        toast.error("This review belongs to a different judge.")
+        setIsSavingReviewedEdit(false)
+        return
+      }
+      if (error) {
+        toast.error("Failed to save review")
+        console.error(error)
+        setIsSavingReviewedEdit(false)
+        return
+      }
+      toast.success("Review saved")
+      setReviewedEditMode(false)
+    } catch (err) {
+      toast.error("Failed to save review")
+      console.error(err)
+    }
+    setIsSavingReviewedEdit(false)
+  }, [
+    selectedReviewedEntry,
+    userId,
+    reviewedEditScore,
+    reviewedEditNotes,
+    reviewedEditAnswers,
+    saveQueueReview
+  ])
+
   useEffect(() => {
     if (
       !activeReviewEntry ||
@@ -1929,10 +2438,13 @@ export default function QueuesPage() {
       : Math.max(1, Math.floor(parsed))
 
     if (maxMinutesPerTeam && desiredMinutes > maxMinutesPerTeam) {
-      const roundedMaxMinutes = Math.max(1, Math.floor(maxMinutesPerTeam))
-      toast.error(
-        `Desired time cannot exceed current max (${roundedMaxMinutes} min/team)`
-      )
+      const maxLabel =
+        maxMinutesPerTeam <= 0
+          ? "0 min/team"
+          : maxMinutesPerTeam < 1
+            ? "menos de 1 min/team"
+            : `${formatMinutesToHm(maxMinutesPerTeam)} / team`
+      toast.error(`Desired time cannot exceed current max (${maxLabel})`)
       return
     }
 
@@ -2234,6 +2746,10 @@ export default function QueuesPage() {
         throw new Error("Unable to resolve submission for queue entry")
       }
 
+      const submissionMeta =
+        allSubmissions.find((submission) => submission.id === submissionId) ||
+        null
+
       const blockers = await getQueueBlockersBySubmission([submissionId])
       const blocker = blockers.get(submissionId)
       if (blocker) {
@@ -2293,6 +2809,8 @@ export default function QueuesPage() {
           roomId: resolvedTargetRoomId || selectedRoomId,
           queueEntryId: entry.id,
           submissionId,
+          teamNumber: submissionMeta?.number,
+          teamTitle: submissionMeta?.title,
           source: "callEntryToBuffer"
         })
         return
@@ -2322,11 +2840,14 @@ export default function QueuesPage() {
         roomId: resolvedTargetRoomId || selectedRoomId,
         queueEntryId: entry.id,
         submissionId,
+        teamNumber: submissionMeta?.number,
+        teamTitle: submissionMeta?.title,
         source: "callEntryToBuffer:fallback"
       })
     },
     [
       activeSharedPoolRoomIds,
+      allSubmissions,
       getQueueBlockersBySubmission,
       logNotificationHook,
       roomQueueStateByRoom,
@@ -2725,6 +3246,7 @@ export default function QueuesPage() {
         queueEntryId: targetEntry.id,
         submissionId: targetEntry.submission_id,
         teamNumber: targetEntry.submissions.number,
+        teamTitle: targetEntry.submissions.title,
         source: "startPresentation"
       })
 
@@ -3394,7 +3916,7 @@ export default function QueuesPage() {
                 )}
                 {desiredTimeConstrained && (
                   <p className="text-xs font-medium text-amber-600">
-                    Desired reduced to fit remaining window. ETA updated.
+                    Target reduced to fit remaining window.
                   </p>
                 )}
               </div>
@@ -3731,13 +4253,6 @@ export default function QueuesPage() {
                       </div>
                     </div>
                   </div>
-
-                  {dynamicMaxMinutesPerTeam !== null &&
-                    maxMinutesPerTeamLabel !== null && (
-                      <p className="text-xs text-muted-foreground">
-                        Max now: {maxMinutesPerTeamLabel} / team
-                      </p>
-                    )}
 
                   <div>
                     <p className="text-xs text-muted-foreground">
@@ -4134,7 +4649,22 @@ export default function QueuesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex justify-start sm:justify-end">
+            <div className="flex items-center justify-start gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportReviewsCSV}
+                disabled={
+                  isExportingReviews || reviewedBaseEntries.length === 0
+                }
+              >
+                {isExportingReviews ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Export CSV
+              </Button>
               <Badge variant="outline">{reviewedEntries.length} shown</Badge>
             </div>
           </div>

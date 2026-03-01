@@ -1,9 +1,8 @@
 "use client"
 
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { toSlug } from "@/lib/slug"
 import { createClient } from "@/lib/supabase/client"
+import { useTheme } from "next-themes"
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
@@ -26,6 +25,9 @@ interface RoomQueueStateRow {
 }
 
 const DEFAULT_BUFFER_TARGET = 2
+const TV_GRID_COLUMNS = 6
+const TV_GRID_ROWS = 2
+const TV_GRID_CAPACITY = TV_GRID_COLUMNS * TV_GRID_ROWS
 
 interface QueueEntryRow {
   id: string
@@ -60,7 +62,7 @@ interface ChallengePoolRow {
   roomStateByRoom: Record<string, RoomQueueStateRow>
   currentByRoom: Record<string, QueueEntryRow | null>
   bufferByRoom: Record<string, QueueEntryRow[]>
-  sharedNextOnQueue: QueueEntryRow | null
+  sharedQueuePreview: QueueEntryRow[]
   waitingCount: number
 }
 
@@ -159,17 +161,9 @@ function normalizeQueueEntries(
     .filter((value): value is QueueEntryRow => value !== null)
 }
 
-function getDynamicColumnCount(itemCount: number, maxColumns = 6): number {
-  if (itemCount <= 1) return 1
-
-  const screenAspectRatio = 16 / 9
-  const ideal = Math.round(Math.sqrt(itemCount * screenAspectRatio))
-
-  return Math.max(1, Math.min(itemCount, maxColumns, ideal))
-}
-
 export default function TvGeneralPage() {
   const supabase = useMemo(() => createClient(), [])
+  const { resolvedTheme, setTheme } = useTheme()
   const [rooms, setRooms] = useState<RoomRow[]>([])
   const [entries, setEntries] = useState<QueueEntryRow[]>([])
   const [roomStateByRoom, setRoomStateByRoom] = useState<
@@ -180,9 +174,12 @@ export default function TvGeneralPage() {
     useState<Record<string, string>>({})
   const latestFetchIdRef = useRef(0)
   const [nowMs, setNowMs] = useState<number | null>(null)
-  const viewportRef = useRef<HTMLDivElement | null>(null)
-  const contentRef = useRef<HTMLDivElement | null>(null)
-  const [contentScale, setContentScale] = useState(1)
+
+  useEffect(() => {
+    if (resolvedTheme === "dark") {
+      setTheme("light")
+    }
+  }, [resolvedTheme, setTheme])
 
   const fetchData = useCallback(async () => {
     const fetchId = ++latestFetchIdRef.current
@@ -470,12 +467,14 @@ export default function TvGeneralPage() {
           }
         )
 
-        const sharedNextAvailableOnQueue =
+        const availableWaitingEntries =
           activePoolRoomIds.length === 0
-            ? null
-            : sharedWaitingEntries.find(
+            ? []
+            : sharedWaitingEntries.filter(
                 (entry) => !blockedSubmissionIds.has(entry.submission_id)
-              ) || null
+              )
+
+        const sharedQueuePreview = availableWaitingEntries.slice(0, 4)
 
         rows.push({
           poolKey,
@@ -485,7 +484,7 @@ export default function TvGeneralPage() {
           roomStateByRoom: stateByRoom,
           currentByRoom,
           bufferByRoom,
-          sharedNextOnQueue: sharedNextAvailableOnQueue,
+          sharedQueuePreview,
           waitingCount: sharedWaitingEntries.length
         })
       })
@@ -500,339 +499,324 @@ export default function TvGeneralPage() {
     rooms
   ])
 
-  const poolColumnCount = useMemo(
-    () => getDynamicColumnCount(poolRows.length),
-    [poolRows.length]
+  // Pools visibles respetando el límite de 12 celdas (cada sala ocupa 1 celda)
+  const visiblePools = useMemo(() => {
+    const result: ChallengePoolRow[] = []
+    let used = 0
+    for (const pool of poolRows) {
+      const span = pool.rooms.length
+      if (used + span > TV_GRID_CAPACITY) break
+      result.push(pool)
+      used += span
+    }
+    return result
+  }, [poolRows])
+
+  const usedCells = useMemo(
+    () => visiblePools.reduce((sum, p) => sum + p.rooms.length, 0),
+    [visiblePools]
   )
-
-  const recalculateContentScale = useCallback(() => {
-    const viewport = viewportRef.current
-    const content = contentRef.current
-
-    if (!viewport || !content) return
-
-    const previousTransform = content.style.transform
-    const previousWidth = content.style.width
-
-    content.style.transform = "scale(1)"
-    content.style.width = "100%"
-
-    const naturalWidth = content.scrollWidth
-    const naturalHeight = content.scrollHeight
-    const availableWidth = viewport.clientWidth
-    const availableHeight = viewport.clientHeight
-
-    content.style.transform = previousTransform
-    content.style.width = previousWidth
-
-    if (
-      naturalWidth === 0 ||
-      naturalHeight === 0 ||
-      availableWidth === 0 ||
-      availableHeight === 0
-    ) {
-      setContentScale(1)
-      return
-    }
-
-    const nextScale = Math.min(
-      1,
-      availableWidth / naturalWidth,
-      availableHeight / naturalHeight
-    )
-    setContentScale(Number.isFinite(nextScale) && nextScale > 0 ? nextScale : 1)
-  }, [])
-
-  useEffect(() => {
-    const viewport = viewportRef.current
-    const content = contentRef.current
-
-    if (!viewport || !content) return
-
-    const observer = new ResizeObserver(() => {
-      recalculateContentScale()
-    })
-
-    observer.observe(viewport)
-    observer.observe(content)
-
-    recalculateContentScale()
-
-    return () => {
-      observer.disconnect()
-    }
-  }, [recalculateContentScale])
-
-  useEffect(() => {
-    recalculateContentScale()
-  }, [poolRows, recalculateContentScale])
+  const totalRooms = useMemo(
+    () => poolRows.reduce((sum, p) => sum + p.rooms.length, 0),
+    [poolRows]
+  )
+  const hiddenRoomCount = Math.max(0, totalRooms - usedCells)
+  const emptyCellCount = Math.max(0, TV_GRID_CAPACITY - usedCells)
 
   return (
-    <main className="h-dvh overflow-hidden bg-muted/40">
-      <div ref={viewportRef} className="h-full w-full p-4 md:p-6">
-        <div
-          ref={contentRef}
-          className="origin-top-left"
-          style={{
-            transform: `scale(${contentScale})`,
-            width: contentScale < 1 ? `${100 / contentScale}%` : "100%"
-          }}
-        >
-          <div className="mx-auto w-full space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h1 className="text-3xl font-bold tracking-tight">
-                FastTrack · TV General
-              </h1>
-              <div className="flex items-center gap-2 text-lg text-muted-foreground">
-                <span>{nowLabel}</span>
-              </div>
-            </div>
+    <main className="h-dvh overflow-hidden bg-slate-100">
+      {/* ── Top bar ─────────────────────────────────────────────── */}
+      <div className="flex h-[10%] items-center justify-between px-6">
+        <h1 className="text-2xl font-black tracking-tight text-slate-800">
+          FastTrack
+        </h1>
+        <div className="flex items-center gap-3">
+          {hiddenRoomCount > 0 && (
+            <span className="text-sm font-semibold text-amber-600">
+              +{hiddenRoomCount} salas fuera de pantalla
+            </span>
+          )}
+          <span className="text-2xl font-bold tabular-nums text-slate-500">
+            {nowLabel}
+          </span>
+        </div>
+      </div>
 
-            <div
-              className="grid gap-3"
-              style={{
-                gridTemplateColumns: `repeat(${poolColumnCount}, minmax(0, 1fr))`
-              }}
-            >
-              {poolRows.map(
-                ({
-                  poolKey,
-                  challengeTitle,
-                  challengeKeyword,
-                  rooms,
-                  roomStateByRoom: poolState,
-                  currentByRoom,
-                  bufferByRoom,
-                  sharedNextOnQueue,
-                  waitingCount
-                }) => {
-                  const singleRoom = rooms.length === 1
-                  const room = rooms[0]
-                  const roomState = poolState[room.id]
-                  const current = currentByRoom[room.id]
-                  const roomBuffer = bufferByRoom[room.id] || []
-                  const roomBufferLimit = Math.max(
-                    0,
-                    roomState.buffer_target ?? DEFAULT_BUFFER_TARGET
-                  )
-                  const roomGridColumns = getDynamicColumnCount(rooms.length, 4)
+      {/* ── Grid 6×2 ────────────────────────────────────────────── */}
+      <div
+        className="grid h-[90%] gap-2 px-3 pb-3"
+        style={{
+          gridTemplateColumns: `repeat(${TV_GRID_COLUMNS}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${TV_GRID_ROWS}, minmax(0, 1fr))`
+        }}
+      >
+        {visiblePools.map((pool) => {
+          const isGroup = pool.rooms.length > 1
+          const label = pool.challengeKeyword || pool.challengeTitle
 
-                  return (
-                    <Card
-                      key={poolKey}
-                      className="flex min-h-0 flex-col border bg-background shadow-sm"
-                    >
-                      <CardHeader className="space-y-2 pb-2">
-                        <div className="flex items-center justify-between gap-2">
-                          {singleRoom ? (
-                            <Link
-                              href={`/tv/${toSlug(room.name)}`}
-                              className="truncate text-lg font-semibold hover:underline"
-                            >
-                              {room.name} · {challengeTitle}
-                            </Link>
-                          ) : (
-                            <p className="truncate text-lg font-semibold">
-                              {challengeTitle}
-                            </p>
-                          )}
-                          <span className="text-xs font-medium text-muted-foreground">
-                            Queue {waitingCount}
+          if (isGroup) {
+            // ── Grupo multi-sala: un contenedor que abraza todas las salas ──
+            return (
+              <div
+                key={pool.poolKey}
+                className="flex min-h-0 flex-col overflow-hidden rounded-md border-2 border-slate-300 bg-white shadow-sm"
+                style={{ gridColumn: `span ${pool.rooms.length}` }}
+              >
+                {/* Cabecera del grupo: nombre del reto */}
+                <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <span className="text-lg font-black uppercase tracking-wide text-slate-700">
+                    {label}
+                  </span>
+                  <span className="text-base font-semibold text-slate-400">
+                    · {pool.rooms.length} salas · cola compartida
+                  </span>
+                </div>
+
+                {/* Fila de salas */}
+                <div className="flex min-h-0 flex-1 divide-x divide-slate-100">
+                  {pool.rooms.map((room) => {
+                    const roomState = pool.roomStateByRoom[room.id]
+                    const current = pool.currentByRoom[room.id]
+                    const roomBuffer = pool.bufferByRoom[room.id] || []
+                    const bufferLimit = Math.max(
+                      0,
+                      roomState.buffer_target ?? DEFAULT_BUFFER_TARGET
+                    )
+
+                    return (
+                      <div
+                        key={room.id}
+                        className="flex min-w-0 flex-1 flex-col gap-1.5 p-2"
+                      >
+                        {/* Nombre sala + estado */}
+                        <div className="flex shrink-0 items-center justify-between gap-1">
+                          <Link
+                            href={`/tv/${toSlug(room.name)}`}
+                            className="truncate text-base font-black text-slate-800 hover:underline"
+                          >
+                            {room.name}
+                          </Link>
+                          <span
+                            className={`inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-bold ${
+                              roomState.is_ready
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-red-100 text-red-600"
+                            }`}
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-sm ${roomState.is_ready ? "bg-emerald-500" : "bg-red-400"}`}
+                            />
+                            {roomState.is_ready ? "Lista" : "No lista"}
                           </span>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                          {singleRoom ? (
-                            <Badge
-                              variant={
-                                roomState.is_ready ? "default" : "destructive"
-                              }
-                              className="w-fit"
-                            >
-                              {roomState.is_ready ? "Ready" : "Not ready"}
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" className="w-fit">
-                              {rooms.length} rooms shared
-                            </Badge>
-                          )}
+                        {/* NOW */}
+                        <div className="shrink-0 rounded-sm bg-emerald-50 px-2 py-2 ring-1 ring-emerald-200">
+                          <p className="mb-0.5 text-[11px] font-bold uppercase tracking-widest text-emerald-600">
+                            Presentando
+                          </p>
+                          <p className="truncate text-lg font-black text-emerald-900">
+                            {roomState.is_ready
+                              ? current
+                                ? `#${current.submissions.number} · ${current.submissions.title || "Sin título"}`
+                                : "—"
+                              : "—"}
+                          </p>
+                        </div>
 
-                          {challengeKeyword && (
-                            <Badge variant="outline">{challengeKeyword}</Badge>
+                        {/* STANDBY */}
+                        <div className="min-h-0 flex-1 overflow-hidden rounded-sm bg-amber-50 px-2 py-2 ring-1 ring-amber-200">
+                          <p className="mb-1 text-xs font-bold uppercase tracking-widest text-amber-600">
+                            Standby
+                          </p>
+                          {roomBuffer.length === 0 ? (
+                            <p className="text-lg font-medium text-amber-400">
+                              —
+                            </p>
+                          ) : (
+                            <div className="space-y-1">
+                              {roomBuffer
+                                .slice(0, bufferLimit)
+                                .map((entry, idx) => (
+                                  <p
+                                    key={entry.id}
+                                    className="truncate text-lg font-semibold text-amber-900"
+                                  >
+                                    <span className="mr-1 tabular-nums text-amber-400">
+                                      {idx + 1}.
+                                    </span>
+                                    #{entry.submissions.number} ·{" "}
+                                    {entry.submissions.title || "Sin título"}
+                                  </p>
+                                ))}
+                            </div>
                           )}
                         </div>
-                      </CardHeader>
+                      </div>
+                    )
+                  })}
+                </div>
 
-                      {singleRoom ? (
-                        <CardContent className="flex min-h-0 flex-1 flex-col gap-2 pt-0">
-                          <div className="rounded-md border border-emerald-500/60 bg-emerald-100 px-3 py-2 text-sm dark:bg-emerald-900/40">
-                            <p className="text-[11px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                              Now
-                            </p>
-                            <p className="truncate font-semibold text-emerald-900 dark:text-emerald-100">
-                              {roomState.is_ready
-                                ? current
-                                  ? `Team #${current.submissions.number} · ${current.submissions.title || "Untitled"}`
-                                  : "—"
-                                : "Waiting room"}
-                            </p>
-                          </div>
-
-                          <div className="rounded-md border border-amber-500/60 bg-amber-100 px-3 py-2 text-sm dark:bg-amber-900/40">
-                            <p className="text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                              Standby
-                            </p>
-                            {roomBuffer.length === 0 ? (
-                              <div className="rounded-md border border-dashed border-amber-500/50 bg-white/50 px-3 py-2 text-sm text-muted-foreground dark:bg-transparent">
-                                No teams in standby
-                              </div>
-                            ) : (
-                              roomBuffer
-                                .slice(0, roomBufferLimit)
-                                .map((entry) => (
-                                  <div
-                                    key={entry.id}
-                                    className="rounded-md border border-amber-500/50 bg-white/50 px-3 py-2 text-sm font-medium dark:bg-transparent"
-                                  >
-                                    <p className="truncate text-amber-900 dark:text-amber-100">
-                                      Team #{entry.submissions.number} ·{" "}
-                                      {entry.submissions.title || "Untitled"}
-                                    </p>
-                                  </div>
-                                ))
-                            )}
-                          </div>
-
-                          <div className="rounded-md border border-sky-500/60 bg-sky-100 px-3 py-2 text-sm dark:bg-sky-900/40">
-                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                              Next on queue
-                            </p>
-                            {sharedNextOnQueue ? (
-                              <p className="truncate font-semibold text-sky-900 dark:text-sky-100">
-                                Team #{sharedNextOnQueue.submissions.number} ·{" "}
-                                {sharedNextOnQueue.submissions.title ||
-                                  "Untitled"}
-                              </p>
-                            ) : (
-                              <p className="text-muted-foreground">
-                                No groups waiting
-                              </p>
-                            )}
-                          </div>
-                        </CardContent>
-                      ) : (
-                        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-0">
-                          <div
-                            className="grid gap-2"
-                            style={{
-                              gridTemplateColumns: `repeat(${roomGridColumns}, minmax(0, 1fr))`
-                            }}
-                          >
-                            {rooms.map((poolRoom) => {
-                              const state = poolState[poolRoom.id]
-                              const roomCurrent = currentByRoom[poolRoom.id]
-                              const roomBuffer = bufferByRoom[poolRoom.id] || []
-                              const roomBufferLimit = Math.max(
-                                0,
-                                state.buffer_target ?? DEFAULT_BUFFER_TARGET
-                              )
-
-                              return (
-                                <div
-                                  key={poolRoom.id}
-                                  className="rounded-md border bg-background px-3 py-2 text-sm"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="min-w-0">
-                                      <Link
-                                        href={`/tv/${toSlug(poolRoom.name)}`}
-                                        className="truncate text-sm font-semibold hover:underline"
-                                      >
-                                        {poolRoom.name}
-                                      </Link>
-                                    </div>
-                                    <Badge
-                                      variant={
-                                        state.is_ready
-                                          ? "default"
-                                          : "destructive"
-                                      }
-                                      className="text-[10px]"
-                                    >
-                                      {state.is_ready ? "Ready" : "Not ready"}
-                                    </Badge>
-                                  </div>
-
-                                  <div className="mt-2 rounded-md border border-emerald-500/60 bg-emerald-100 px-3 py-2 dark:bg-emerald-900/40">
-                                    <p className="text-[11px] uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                                      Now
-                                    </p>
-                                    <p className="truncate font-semibold text-emerald-900 dark:text-emerald-100">
-                                      {!state.is_ready
-                                        ? "Waiting room"
-                                        : roomCurrent
-                                          ? `#${roomCurrent.submissions.number} · ${roomCurrent.submissions.title || "Untitled"}`
-                                          : "—"}
-                                    </p>
-                                  </div>
-
-                                  <div className="mt-2 rounded-md border border-amber-500/60 bg-amber-100 px-3 py-2 dark:bg-amber-900/40">
-                                    <p className="text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                                      Standby
-                                    </p>
-                                    {roomBuffer.length === 0 ? (
-                                      <div className="rounded-md border border-dashed border-amber-500/50 bg-white/50 px-2 py-1 text-xs text-muted-foreground dark:bg-transparent">
-                                        No teams in standby
-                                      </div>
-                                    ) : (
-                                      <div className="space-y-1">
-                                        {roomBuffer
-                                          .slice(0, roomBufferLimit)
-                                          .map((entry) => (
-                                            <div
-                                              key={entry.id}
-                                              className="rounded-md border border-amber-500/50 bg-white/50 px-2 py-1 text-xs font-medium text-amber-900 dark:bg-transparent dark:text-amber-100"
-                                            >
-                                              <p className="truncate">
-                                                #{entry.submissions.number} ·{" "}
-                                                {entry.submissions.title ||
-                                                  "Untitled"}
-                                              </p>
-                                            </div>
-                                          ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-
-                          <div className="rounded-md border border-sky-500/60 bg-sky-100 px-3 py-2 text-sm dark:bg-sky-900/40">
-                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                              Next on shared queue
-                            </p>
-                            {sharedNextOnQueue ? (
-                              <p className="truncate font-semibold text-sky-900 dark:text-sky-100">
-                                Team #{sharedNextOnQueue.submissions.number} ·{" "}
-                                {sharedNextOnQueue.submissions.title ||
-                                  "Untitled"}
-                              </p>
-                            ) : (
-                              <p className="text-muted-foreground">
-                                No groups waiting
-                              </p>
-                            )}
-                          </div>
-                        </CardContent>
-                      )}
-                    </Card>
+                {/* Barra compartida de "Siguiente en cola" */}
+                {(() => {
+                  const firstRoomId = pool.rooms[0]?.id ?? ""
+                  const groupBufferLimit = Math.max(
+                    0,
+                    pool.roomStateByRoom[firstRoomId]?.buffer_target ??
+                      DEFAULT_BUFFER_TARGET
                   )
-                }
-              )}
+                  const nextEntry = pool.sharedQueuePreview[0] ?? null
+                  return (
+                    <div className="shrink-0 border-t border-sky-200 bg-sky-50 px-3 py-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-sm font-bold uppercase tracking-widest text-sky-600">
+                          Siguiente en cola
+                        </span>
+                        <span className="rounded-md bg-slate-100 px-3 py-0.5 text-sm font-bold tabular-nums text-slate-500">
+                          Q&thinsp;{pool.waitingCount}
+                        </span>
+                      </div>
+                      {nextEntry ? (
+                        <p className="truncate text-lg font-bold text-sky-900">
+                          <span className="mr-1 text-sky-500">
+                            {groupBufferLimit + 1}.
+                          </span>
+                          #{nextEntry.submissions.number} ·{" "}
+                          {nextEntry.submissions.title || "Sin título"}
+                        </p>
+                      ) : (
+                        <p className="text-lg font-bold text-sky-900">—</p>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+            )
+          }
+
+          // ── Sala individual ──────────────────────────────────────
+          const room = pool.rooms[0]
+          const roomState = pool.roomStateByRoom[room.id]
+          const current = pool.currentByRoom[room.id]
+          const roomBuffer = pool.bufferByRoom[room.id] || []
+          const bufferLimit = Math.max(
+            0,
+            roomState.buffer_target ?? DEFAULT_BUFFER_TARGET
+          )
+
+          return (
+            <div
+              key={pool.poolKey}
+              className="flex min-h-0 flex-col overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm"
+            >
+              {/* Cabecera */}
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <Link
+                    href={`/tv/${toSlug(room.name)}`}
+                    className="truncate text-xl font-black text-slate-900 hover:underline"
+                  >
+                    {room.name}
+                  </Link>
+                  <span className="inline-flex shrink-0 items-center rounded border border-slate-300 bg-slate-100 px-3 py-1.5 text-base font-bold uppercase tracking-wide text-slate-600">
+                    {label}
+                  </span>
+                </div>
+                <span
+                  className={`inline-flex shrink-0 items-center gap-1 rounded px-3 py-1 text-sm font-bold ${
+                    roomState.is_ready
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-red-100 text-red-600"
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-sm ${roomState.is_ready ? "bg-emerald-500" : "bg-red-400"}`}
+                  />
+                  {roomState.is_ready ? "Lista" : "No lista"}
+                </span>
+              </div>
+
+              {/* Cuerpo */}
+              <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
+                {/* NOW */}
+                <div className="shrink-0 rounded-sm bg-emerald-50 px-3 py-2 ring-1 ring-emerald-200">
+                  <p className="mb-0.5 text-xs font-bold uppercase tracking-widest text-emerald-600">
+                    Presentando
+                  </p>
+                  <p className="truncate text-xl font-black text-emerald-900">
+                    {roomState.is_ready
+                      ? current
+                        ? `#${current.submissions.number} · ${current.submissions.title || "Sin título"}`
+                        : "—"
+                      : "—"}
+                  </p>
+                </div>
+
+                {/* STANDBY */}
+                <div className="min-h-0 flex-1 overflow-hidden rounded-sm bg-amber-50 px-3 py-2.5 ring-1 ring-amber-200">
+                  <p className="mb-1 text-xs font-bold uppercase tracking-widest text-amber-600">
+                    Standby
+                  </p>
+                  {roomBuffer.length === 0 ? (
+                    <p className="text-lg font-medium text-amber-400">—</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {roomBuffer.slice(0, bufferLimit).map((entry, idx) => (
+                        <p
+                          key={entry.id}
+                          className="truncate text-lg font-semibold text-amber-900"
+                        >
+                          <span className="mr-1.5 tabular-nums text-amber-500">
+                            {idx + 1}.
+                          </span>
+                          #{entry.submissions.number} ·{" "}
+                          {entry.submissions.title || "Sin título"}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* NEXT */}
+                {(() => {
+                  const nextEntry = pool.sharedQueuePreview[0] ?? null
+                  return (
+                    <div className="shrink-0 rounded-sm bg-sky-50 px-3 py-2 ring-1 ring-sky-200">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold uppercase tracking-widest text-sky-600">
+                          Siguiente en cola
+                        </p>
+                        <span className="rounded-md bg-slate-100 px-3 py-0.5 text-sm font-bold tabular-nums text-slate-500">
+                          Q&thinsp;{pool.waitingCount}
+                        </span>
+                      </div>
+                      {nextEntry ? (
+                        <p className="truncate text-lg font-bold text-sky-900">
+                          <span className="mr-1 text-sky-500">
+                            {bufferLimit + 1}.
+                          </span>
+                          #{nextEntry.submissions.number} ·{" "}
+                          {nextEntry.submissions.title || "Sin título"}
+                        </p>
+                      ) : (
+                        <p className="text-lg font-bold text-sky-900">—</p>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
-          </div>
-        </div>
+          )
+        })}
+
+        {/* Celdas vacías */}
+        {Array.from({ length: emptyCellCount }).map((_, index) => (
+          <div
+            key={`empty-cell-${index}`}
+            className="h-full min-h-0 rounded-md border border-dashed border-slate-200"
+            aria-hidden
+          />
+        ))}
       </div>
     </main>
   )

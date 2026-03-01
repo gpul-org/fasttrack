@@ -19,8 +19,11 @@ export default function DashboardLayout({
   return (
     <Suspense>
       <SidebarProvider>
-        <div className="flex min-h-screen w-full">
-          <Sidebar collapsible="none" className="w-48 border-r">
+        <div className="dashboard-dark-gradient min-h-screen w-full">
+          <Sidebar
+            collapsible="none"
+            className="fixed inset-y-0 left-0 z-30 w-48 border-r"
+          >
             <SidebarHeader className="flex flex-row items-center justify-center gap-2 border-b p-4">
               <FastForward className="h-6 w-6" />
               <span className="text-lg font-semibold">FastTrack</span>
@@ -34,7 +37,7 @@ export default function DashboardLayout({
               <SidebarUser />
             </SidebarFooter>
           </Sidebar>
-          <main className="flex-1 overflow-auto">
+          <main className="min-h-screen overflow-auto pl-48">
             <div className="p-6">
               <Suspense>
                 <DashboardBreadcrumb />

@@ -58,6 +58,18 @@ async function resolvePostLoginRoute(
   rawEmail?: string
 ) {
   const email = (rawEmail || user.email || "").trim().toLowerCase()
+
+  // Check if user has an assigned role (admin/judge) → go to dashboard
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle()
+
+  if (profile?.role !== null && profile?.role !== undefined) {
+    return "/dashboard"
+  }
+
   const participant = email
     ? await findParticipantByEmail(supabase, email)
     : null

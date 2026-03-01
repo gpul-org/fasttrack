@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { toSlug } from "@/lib/slug"
 import { createClient } from "@/lib/supabase/client"
+import { useTheme } from "next-themes"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import {
@@ -166,6 +167,7 @@ function getRoomPoolKey(room: RoomRow): string {
 }
 
 function TvRoomPageContent() {
+  const { resolvedTheme, setTheme } = useTheme()
   const params = useParams<{ room?: string | string[] }>()
   const roomSegmentRaw = params?.room
   const roomSegment =
@@ -185,6 +187,12 @@ function TvRoomPageContent() {
     useState<Record<string, string>>({})
   const latestFetchIdRef = useRef(0)
   const [nowMs, setNowMs] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (resolvedTheme === "dark") {
+      setTheme("light")
+    }
+  }, [resolvedTheme, setTheme])
 
   const fetchData = useCallback(async () => {
     const fetchId = ++latestFetchIdRef.current
@@ -475,7 +483,7 @@ function TvRoomPageContent() {
   )
 
   const nextEntries = [
-    ...buffer.slice(0, 2),
+    ...buffer.slice(0, 3),
     ...(nextWaitingAvailable ? [nextWaitingAvailable] : [])
   ]
 
@@ -483,10 +491,10 @@ function TvRoomPageContent() {
     return (
       <main className="flex min-h-screen items-center justify-center p-6">
         <div className="space-y-3 text-center">
-          <p className="text-xl font-semibold">Room not found</p>
+          <p className="text-3xl font-bold">Room not found</p>
           <Link
             href="/tv"
-            className="text-sm text-muted-foreground hover:underline"
+            className="text-lg text-muted-foreground hover:underline"
           >
             Back to general TV view
           </Link>
@@ -496,50 +504,52 @@ function TvRoomPageContent() {
   }
 
   return (
-    <main className="min-h-screen bg-background p-6 md:p-10">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <main className="min-h-screen bg-background p-8 md:p-12">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
-            <h1 className="text-4xl font-bold tracking-tight">{room.name}</h1>
+            <h1 className="text-6xl font-extrabold tracking-tight">
+              {room.name}
+            </h1>
             {roomState && (
               <Badge
                 variant={roomState.is_ready ? "default" : "destructive"}
-                className="text-sm"
+                className="px-3 py-1 text-base"
               >
                 {roomState.is_ready ? "Room ready" : "Room not ready"}
               </Badge>
             )}
             {room.room_challenges[0]?.challenges && (
-              <Badge variant="secondary" className="text-sm">
+              <Badge variant="secondary" className="px-4 py-1.5 text-lg">
                 {room.room_challenges[0].challenges.title}
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xl text-muted-foreground">
+          <div className="flex items-center gap-2 text-4xl font-semibold text-muted-foreground">
             <span>{nowLabel}</span>
           </div>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Now presenting</CardTitle>
+            <CardTitle className="text-4xl">Now presenting</CardTitle>
           </CardHeader>
           <CardContent>
             {!roomState?.is_ready ? (
-              <p className="text-xl text-muted-foreground">
+              <p className="text-3xl text-muted-foreground">
                 Room is not ready yet.
               </p>
             ) : current ? (
-              <div className="space-y-2">
-                <div className="text-6xl font-extrabold">
+              <div className="space-y-3">
+                <div className="text-7xl font-extrabold">
                   Team #{current.submissions.number}
                 </div>
-                <div className="text-2xl text-muted-foreground">
+                <div className="text-4xl text-muted-foreground">
                   {current.submissions.title || "Untitled"}
                 </div>
               </div>
             ) : (
-              <p className="text-xl text-muted-foreground">
+              <p className="text-3xl text-muted-foreground">
                 Waiting for next group...
               </p>
             )}
@@ -548,22 +558,24 @@ function TvRoomPageContent() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Next in queue</CardTitle>
+            <CardTitle className="text-4xl">Next in queue</CardTitle>
           </CardHeader>
           <CardContent>
             {nextEntries.length === 0 ? (
-              <p className="text-muted-foreground">No groups in queue.</p>
+              <p className="text-2xl text-muted-foreground">
+                No groups in queue.
+              </p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {nextEntries.map((entry, index) => (
                   <div
                     key={entry.id}
-                    className="flex items-center justify-between rounded-md border p-3"
+                    className="flex items-center justify-between rounded-md border p-5"
                   >
-                    <span className="font-semibold">
+                    <span className="text-3xl font-bold">
                       {index + 1}. Team #{entry.submissions.number}
                     </span>
-                    <span className="text-muted-foreground">
+                    <span className="text-2xl text-muted-foreground">
                       {entry.status === "called" ? "Standby" : "Queue"} ·{" "}
                       {entry.submissions.title || "Untitled"}
                     </span>
@@ -574,7 +586,7 @@ function TvRoomPageContent() {
           </CardContent>
         </Card>
 
-        <div className="text-sm text-muted-foreground">
+        <div className="text-lg text-muted-foreground">
           <Link href="/tv" className="hover:underline">
             ← General view
           </Link>
