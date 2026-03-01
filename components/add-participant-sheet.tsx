@@ -39,15 +39,21 @@ export function AddParticipantSheet({
   const [email, setEmail] = useState("")
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
+  const [discordUsername, setDiscordUsername] = useState("")
   const [saving, setSaving] = useState(false)
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
 
-  const isDirty = email !== "" || firstName !== "" || lastName !== ""
+  const isDirty =
+    email !== "" ||
+    firstName !== "" ||
+    lastName !== "" ||
+    discordUsername !== ""
 
   const resetForm = () => {
     setEmail("")
     setFirstName("")
     setLastName("")
+    setDiscordUsername("")
   }
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -81,7 +87,8 @@ export function AddParticipantSheet({
     const { error } = await supabase.from("participants").insert({
       email: trimmedEmail,
       first_name: firstName.trim() || null,
-      last_name: lastName.trim() || null
+      last_name: lastName.trim() || null,
+      discord_username: discordUsername.trim() || null
     })
     setSaving(false)
 
@@ -139,6 +146,15 @@ export function AddParticipantSheet({
                 placeholder="Doe"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="participant-discord">Discord</Label>
+              <Input
+                id="participant-discord"
+                placeholder="username"
+                value={discordUsername}
+                onChange={(e) => setDiscordUsername(e.target.value)}
               />
             </div>
           </div>

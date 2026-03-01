@@ -30,6 +30,7 @@ interface Participant {
   email: string
   first_name: string | null
   last_name: string | null
+  discord_username: string | null
 }
 
 interface EditParticipantSheetProps {
@@ -48,13 +49,17 @@ export function EditParticipantSheet({
   const [email, setEmail] = useState(participant.email)
   const [firstName, setFirstName] = useState(participant.first_name || "")
   const [lastName, setLastName] = useState(participant.last_name || "")
+  const [discordUsername, setDiscordUsername] = useState(
+    participant.discord_username || ""
+  )
   const [saving, setSaving] = useState(false)
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
 
   const isDirty =
     email !== participant.email ||
     firstName !== (participant.first_name || "") ||
-    lastName !== (participant.last_name || "")
+    lastName !== (participant.last_name || "") ||
+    discordUsername !== (participant.discord_username || "")
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isDirty) {
@@ -69,6 +74,7 @@ export function EditParticipantSheet({
     setEmail(participant.email)
     setFirstName(participant.first_name || "")
     setLastName(participant.last_name || "")
+    setDiscordUsername(participant.discord_username || "")
     onOpenChange(false)
   }
 
@@ -90,7 +96,8 @@ export function EditParticipantSheet({
       .update({
         email: trimmedEmail,
         first_name: firstName.trim() || null,
-        last_name: lastName.trim() || null
+        last_name: lastName.trim() || null,
+        discord_username: discordUsername.trim() || null
       })
       .eq("id", participant.id)
     setSaving(false)
@@ -145,6 +152,15 @@ export function EditParticipantSheet({
                 id="edit-participant-last-name"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-participant-discord">Discord</Label>
+              <Input
+                id="edit-participant-discord"
+                value={discordUsername}
+                onChange={(e) => setDiscordUsername(e.target.value)}
+                placeholder="username"
               />
             </div>
           </div>

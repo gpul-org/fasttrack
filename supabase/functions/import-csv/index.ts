@@ -9,17 +9,22 @@ const corsHeaders = {
 }
 
 // Fixed column indices from DevPost CSV
+// Headers: Project Title, Submission Url, Project Status, Judging Status,
+//   Highest Step Completed, Project Created At, About The Project, "Try it out" Links,
+//   Video Demo Link, Opt-In Prizes, Built With, Submitter First Name, Submitter Last Name,
+//   Submitter Email, Notes, Repo Link, Demo Link, Team Colleges/Universities,
+//   Additional Team Member Count, Team Member 1 First Name, Team Member 1 Last Name, Team Member 1 Email, ...
 const COL = {
-  OPT_IN_PRIZE: 0,
-  PROJECT_TITLE: 1,
-  SUBMISSION_URL: 2,
-  PROJECT_STATUS: 3,
-  // 4: Judging Status
-  // 5: Highest Step Completed
-  // 6: Project Created At
-  // 7: About The Project
-  // 8: "Try it out" Links
-  VIDEO_DEMO_LINK: 9,
+  PROJECT_TITLE: 0,
+  SUBMISSION_URL: 1,
+  PROJECT_STATUS: 2,
+  // 3: Judging Status
+  // 4: Highest Step Completed
+  // 5: Project Created At
+  // 6: About The Project
+  // 7: "Try it out" Links
+  VIDEO_DEMO_LINK: 8,
+  OPT_IN_PRIZE: 9,
   // 10: Built With
   SUBMITTER_FIRST_NAME: 11,
   SUBMITTER_LAST_NAME: 12,

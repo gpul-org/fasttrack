@@ -31,6 +31,11 @@ export default function UploadPage() {
   const [counts, setCounts] = useState({ participants: 0, projects: 0 })
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const [regFile, setRegFile] = useState<File | null>(null)
+  const [isRegDragging, setIsRegDragging] = useState(false)
+  const [isRegUploading, setIsRegUploading] = useState(false)
+  const regInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     const fetchUserRole = async () => {
       const supabase = createClient()
@@ -286,6 +291,115 @@ export default function UploadPage() {
     if (inputRef.current) inputRef.current.value = ""
   }
 
+  const handleRegDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (!isDisabled) setIsRegDragging(true)
+  }
+
+  const handleRegDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsRegDragging(false)
+  }
+
+  const handleRegDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsRegDragging(false)
+    if (isDisabled) return
+    const droppedFile = e.dataTransfer.files[0]
+    if (droppedFile && validateFile(droppedFile)) {
+      setRegFile(droppedFile)
+    }
+  }
+
+  const handleRegFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0]
+    if (selectedFile && validateFile(selectedFile)) {
+      setRegFile(selectedFile)
+    }
+  }
+
+  const handleRegRemoveFile = () => {
+    setRegFile(null)
+    if (regInputRef.current) regInputRef.current.value = ""
+  }
+
+  const handleRegUpload = async () => {
+    if (!regFile) return
+    setIsRegUploading(true)
+
+    try {
+      const supabase = createClient()
+
+      const {
+        data: { session }
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        toast.error("Your session expired. Please log in again.")
+        return
+      }
+
+      const { data: refreshed, error: refreshError } =
+        await supabase.auth.refreshSession()
+      const accessToken =
+        refreshed.session?.access_token ?? session.access_token
+
+      if (refreshError || !accessToken) {
+        toast.error("Invalid session token. Please log out and log in again.")
+        return
+      }
+
+      const formData = new FormData()
+      formData.append("file", regFile)
+
+      const { data, error } = await supabase.functions.invoke(
+        "import-registrants",
+        {
+          body: formData,
+          headers: { Authorization: `Bearer ${accessToken}` }
+        }
+      )
+
+      if (error) {
+        let message = error.message || "Upload failed"
+        const context = (error as { context?: Response }).context
+        if (context) {
+          try {
+            const payload = await context.clone().json()
+            const serverMessage =
+              typeof payload?.error === "string"
+                ? payload.error
+                : typeof payload?.message === "string"
+                  ? payload.message
+                  : null
+            if (serverMessage) message = serverMessage
+          } catch {
+            try {
+              const text = await context.text()
+              if (text) message = text
+            } catch {
+              // Keep original message
+            }
+          }
+        }
+        toast.error(message)
+        return
+      }
+
+      toast.success(
+        `Updated ${data.updated} Discord handles (${data.skipped} skipped — not in participants)`
+      )
+      setRegFile(null)
+      if (regInputRef.current) regInputRef.current.value = ""
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      toast.error(raw || "Upload failed")
+      console.error("Registrant CSV upload failed:", err)
+    } finally {
+      setIsRegUploading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -429,6 +543,77 @@ export default function UploadPage() {
           </div>
         </div>
       )}
+
+      <div className="border-t pt-6">
+        <p className="mb-4 text-sm text-muted-foreground">
+          Upload the registrant CSV from DevPost to fill in Discord handles for
+          existing participants.
+        </p>
+
+        <div
+          onDragOver={handleRegDragOver}
+          onDragLeave={handleRegDragLeave}
+          onDrop={handleRegDrop}
+          onClick={() => !isDisabled && regInputRef.current?.click()}
+          className={cn(
+            "flex min-h-[160px] flex-col items-center justify-center gap-3 rounded-md border border-dashed p-6 text-center transition-colors",
+            isRegDragging && "border-primary bg-accent",
+            isDisabled
+              ? "cursor-not-allowed opacity-50"
+              : "cursor-pointer hover:border-primary/50 hover:bg-accent/50"
+          )}
+        >
+          <FileUp className="h-8 w-8 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">
+              Registrant data — click to browse or drag and drop
+            </p>
+            <p className="text-xs text-muted-foreground">CSV files only</p>
+          </div>
+          <Input
+            ref={regInputRef}
+            type="file"
+            accept=".csv"
+            onChange={handleRegFileChange}
+            disabled={isDisabled}
+            className="hidden"
+          />
+        </div>
+
+        {regFile && (
+          <div className="mt-3 flex items-center justify-between rounded-md border px-4 py-3">
+            <div className="flex items-center gap-3 text-sm">
+              <FileUp className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">{regFile.name}</span>
+              <span className="text-muted-foreground">
+                ({(regFile.size / 1024).toFixed(1)} KB)
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleRegUpload}
+                size="sm"
+                disabled={isDisabled || isRegUploading}
+              >
+                {isRegUploading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
+                {isRegUploading ? "Importing..." : "Upload"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleRegRemoveFile}
+                disabled={isRegUploading}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

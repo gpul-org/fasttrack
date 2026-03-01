@@ -23,6 +23,7 @@ interface Participant {
   email: string
   first_name: string | null
   last_name: string | null
+  discord_username: string | null
 }
 
 export default function ParticipantsPage() {
@@ -38,7 +39,7 @@ export default function ParticipantsPage() {
     const supabase = createClient()
     const { data, error } = await supabase
       .from("participants")
-      .select("id, email, first_name, last_name")
+      .select("id, email, first_name, last_name, discord_username")
       .order("first_name")
 
     if (error) {
@@ -127,9 +128,10 @@ export default function ParticipantsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[25%] pl-6">First Name</TableHead>
-              <TableHead className="w-[25%]">Last Name</TableHead>
-              <TableHead className="w-[40%]">Email</TableHead>
+              <TableHead className="w-[20%] pl-6">First Name</TableHead>
+              <TableHead className="w-[20%]">Last Name</TableHead>
+              <TableHead className="w-[35%]">Email</TableHead>
+              <TableHead className="w-[15%]">Discord</TableHead>
               <TableHead className="w-[50px] text-right" />
             </TableRow>
           </TableHeader>
@@ -146,6 +148,9 @@ export default function ParticipantsPage() {
                   <TableCell className="py-3">
                     <Skeleton className="h-4 w-40" />
                   </TableCell>
+                  <TableCell className="py-3">
+                    <Skeleton className="h-4 w-24" />
+                  </TableCell>
                   <TableCell className="pr-4 text-right">
                     <Skeleton className="ml-auto h-8 w-8 rounded-md" />
                   </TableCell>
@@ -154,7 +159,7 @@ export default function ParticipantsPage() {
             ) : paginatedParticipants.length === 0 ? (
               participants.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-60">
+                  <TableCell colSpan={5} className="h-60">
                     <div className="flex flex-col items-center justify-center gap-3 py-8">
                       <div className="rounded-full bg-muted p-3">
                         <Upload className="h-6 w-6 text-muted-foreground" />
@@ -173,7 +178,7 @@ export default function ParticipantsPage() {
                 </TableRow>
               ) : (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center">
+                  <TableCell colSpan={5} className="text-center">
                     No participants found
                   </TableCell>
                 </TableRow>
@@ -187,6 +192,9 @@ export default function ParticipantsPage() {
                   <TableCell className="py-3">{p.last_name || "—"}</TableCell>
                   <TableCell className="py-3 text-muted-foreground">
                     {p.email}
+                  </TableCell>
+                  <TableCell className="py-3 text-muted-foreground">
+                    {p.discord_username || "—"}
                   </TableCell>
                   <TableCell className="pr-4 text-right">
                     <Link href={`/dashboard/participants/${p.id}`}>

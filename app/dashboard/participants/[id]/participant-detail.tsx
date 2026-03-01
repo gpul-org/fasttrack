@@ -36,6 +36,7 @@ interface Participant {
   email: string
   first_name: string | null
   last_name: string | null
+  discord_username: string | null
 }
 
 interface Submission {
@@ -60,7 +61,7 @@ export function ParticipantDetail({ id }: { id: string }) {
 
     const { data: participantData, error: participantError } = await supabase
       .from("participants")
-      .select("id, email, first_name, last_name")
+      .select("id, email, first_name, last_name, discord_username")
       .eq("id", id)
       .single()
 
@@ -189,6 +190,21 @@ export function ParticipantDetail({ id }: { id: string }) {
               )}
             </div>
           </div>
+
+          <div className="border-t" />
+
+          <div className="flex items-center justify-between p-4">
+            <Label className="w-28 shrink-0 text-sm font-medium text-muted-foreground">
+              Discord
+            </Label>
+            <div className="flex-1 text-sm">
+              {loading ? (
+                <Skeleton className="h-4 w-32" />
+              ) : (
+                participant?.discord_username || "—"
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -264,7 +280,7 @@ export function ParticipantDetail({ id }: { id: string }) {
 
       {participant && (
         <EditParticipantSheet
-          key={`${participant.id}-${participant.email}-${participant.first_name}-${participant.last_name}`}
+          key={`${participant.id}-${participant.email}-${participant.first_name}-${participant.last_name}-${participant.discord_username}`}
           open={editSheetOpen}
           onOpenChange={setEditSheetOpen}
           participant={participant}
