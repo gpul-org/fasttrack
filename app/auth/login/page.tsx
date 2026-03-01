@@ -9,7 +9,7 @@ export default function Page() {
           <FastForward className="h-8 w-8" />
           <h1 className="text-2xl font-bold">FastTrack sign in</h1>
           <p className="text-sm text-muted-foreground">
-            One login flow for participants, judges and admins.
+            Login for judges and admins.
           </p>
         </div>
 

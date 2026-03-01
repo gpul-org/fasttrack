@@ -549,6 +549,11 @@ export default function QueuesPage() {
   > | null>(null)
   const applyingRemoteReviewDraftRef = useRef(false)
   const notifiedNearTopEntryIdsRef = useRef<Set<string>>(new Set())
+  // Tracks which rooms have had their first fetch, to avoid notifying entries
+  // that were already in the top N when the dashboard was opened.
+  const initializedRoomsRef = useRef<Set<string>>(new Set())
+  // Prevents concurrent fetchQueue calls from racing and sending duplicate notifications.
+  const isFetchingQueueRef = useRef(false)
 
   const sendDiscordViaApi = useCallback(
     async ({
@@ -589,12 +594,13 @@ export default function QueuesPage() {
 
   const buildDiscordNotificationPayload = useCallback(
     (
-      event: "queue_near_top" | "entered_buffer" | "presentation_now",
+      event: "queue_near_top" | "entered_buffer",
       payload: Record<string, unknown>
     ) => {
       const roomId = typeof payload.roomId === "string" ? payload.roomId : null
       const fallbackContext = {
         roomScopeLabel: "the assigned room",
+        specificRoomName: "the assigned room",
         challengeLabel: "the assigned challenge",
         parallelRoomCount: 1,
         desiredMinutesPerTeam: DEFAULT_DESIRED_MINUTES_PER_TEAM
@@ -613,10 +619,8 @@ export default function QueuesPage() {
         const roomNames = poolRooms.map((room) => room.name)
         const roomScopeLabel =
           roomNames.length <= 1
-            ? roomNames[0]
-              ? `room ${roomNames[0]}`
-              : fallbackContext.roomScopeLabel
-            : `rooms ${roomNames.join(" or ")}`
+            ? roomNames[0] || fallbackContext.roomScopeLabel
+            : roomNames.join(" / ")
 
         const challengeTitles = Array.from(
           new Set(
@@ -647,6 +651,7 @@ export default function QueuesPage() {
 
         return {
           roomScopeLabel,
+          specificRoomName: baseRoom.name || fallbackContext.specificRoomName,
           challengeLabel,
           parallelRoomCount,
           desiredMinutesPerTeam
@@ -670,10 +675,6 @@ export default function QueuesPage() {
         : teamTitle || "sin número"
       const safeChallenge = context.challengeLabel || "Assigned challenge"
       const safeRoomScope = context.roomScopeLabel || "assigned room"
-      const roomActionLabel =
-        context.parallelRoomCount > 1
-          ? `Any of: ${safeRoomScope}`
-          : safeRoomScope
 
       const baseFields: DiscordEmbedField[] = [
         {
@@ -687,8 +688,8 @@ export default function QueuesPage() {
           inline: true
         },
         {
-          name: "Rooms",
-          value: `\`\`\`txt\n${roomActionLabel}\n\`\`\``,
+          name: context.parallelRoomCount > 1 ? "Possible rooms" : "Room",
+          value: `\`\`\`txt\n${safeRoomScope}\n\`\`\``,
           inline: false
         }
       ]
@@ -743,42 +744,34 @@ export default function QueuesPage() {
         }
       }
 
-      if (event === "entered_buffer") {
-        return {
-          message: `Buffer alert for ${teamLabel}: wait at ${safeRoomScope}.`,
-          embed: {
-            title: "📣 Team called to buffer",
-            description: "Your team is in the final stage before presenting.",
-            color: 0x2563eb,
-            fields: [
-              ...baseFields,
-              {
-                name: "Instruction",
-                value:
-                  "```txt\nPlease wait at the room door until you are called in.\n```",
-                inline: false
-              }
-            ],
-            footer: {
-              text: "FastTrack · Automatic notification"
-            }
-          }
-        }
-      }
-
+      // entered_buffer: show the SPECIFIC room the team is assigned to, not the pool.
+      const specificRoom = context.specificRoomName || safeRoomScope
       return {
-        message: `Presentation alert for ${teamLabel}: it is your turn now.`,
+        message: `Buffer alert for ${teamLabel}: head to room ${specificRoom}.`,
         embed: {
-          title: "🎤 It is your turn",
-          description:
-            "Enter the room now: your presentation starts immediately.",
-          color: 0xdc2626,
+          title: "📣 Team called to buffer",
+          description: "Your team is in the final stage before presenting.",
+          color: 0x2563eb,
           fields: [
-            ...baseFields,
             {
-              name: "Immediate action",
+              name: "Team",
+              value: `**${teamLabel}**`,
+              inline: true
+            },
+            {
+              name: "Challenge",
+              value: `**${safeChallenge}**`,
+              inline: true
+            },
+            {
+              name: "Your room",
+              value: `\`\`\`txt\n${specificRoom}\n\`\`\``,
+              inline: false
+            },
+            {
+              name: "Instruction",
               value:
-                "```txt\nGo into the room now and begin your presentation.\n```",
+                "```txt\nPlease wait at the room door until you are called in.\n```",
               inline: false
             }
           ],
@@ -793,7 +786,7 @@ export default function QueuesPage() {
 
   const sendQueueDiscordNotification = useCallback(
     async (
-      event: "queue_near_top" | "entered_buffer" | "presentation_now",
+      event: "queue_near_top" | "entered_buffer",
       payload: Record<string, unknown>
     ) => {
       const submissionId =
@@ -834,7 +827,7 @@ export default function QueuesPage() {
 
   const logNotificationHook = useCallback(
     (
-      event: "queue_near_top" | "entered_buffer" | "presentation_now",
+      event: "queue_near_top" | "entered_buffer",
       payload: Record<string, unknown>
     ) => {
       switch (event) {
@@ -849,17 +842,6 @@ export default function QueuesPage() {
           void sendQueueDiscordNotification(event, payload)
           console.log(
             "[NOTIFICATION_HOOK][EMAIL][entered_buffer] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE EMAIL",
-            payload
-          )
-          break
-        case "presentation_now":
-          void sendQueueDiscordNotification(event, payload)
-          console.log(
-            "[NOTIFICATION_HOOK][DISCORD][presentation_now] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE DISCORD",
-            payload
-          )
-          console.log(
-            "[NOTIFICATION_HOOK][EMAIL][presentation_now] AQUÍ VA LA LLAMADA A LA FUNCIÓN DE EMAIL",
             payload
           )
           break
@@ -1071,6 +1053,8 @@ export default function QueuesPage() {
 
   const fetchQueue = useCallback(
     async (roomId: string) => {
+      if (isFetchingQueueRef.current) return
+      isFetchingQueueRef.current = true
       const withAttemptsSelect =
         "id, ticket_number, room_id, submission_id, status, call_attempts, priority, created_at, called_at, started_at, completed_at, submissions(id, number, title, devpost_url, repo_url, demo_url, video_url, prizes, submission_participants(participant_id, participants(id, first_name, last_name, email))), queue_reviews(id, queue_entry_id, score, notes, judge_id, answers)"
       const legacySelect =
@@ -1112,6 +1096,7 @@ export default function QueuesPage() {
 
       if (error) {
         toast.error("Failed to fetch queue data")
+        isFetchingQueueRef.current = false
         return
       }
 
@@ -1207,8 +1192,21 @@ export default function QueuesPage() {
         nearTopWaitingEntries.map((entry) => entry.id)
       )
 
+      // On the very first fetch for this room, silently populate the notified set
+      // so we don't spam everyone who was already near the top when the page loaded.
+      const isInitialLoad = !initializedRoomsRef.current.has(roomId)
+      // Mark the room as initialized immediately (before the loop) so that a
+      // concurrent fetch racing us also treats this as a subsequent fetch.
+      initializedRoomsRef.current.add(roomId)
+
       nearTopWaitingEntries.forEach((entry, index) => {
-        if (!notifiedNearTopEntryIdsRef.current.has(entry.id)) {
+        if (
+          !isInitialLoad &&
+          !notifiedNearTopEntryIdsRef.current.has(entry.id)
+        ) {
+          // Mark as notified immediately (before the async call) to prevent a
+          // concurrent fetchQueue from sending the same notification twice.
+          notifiedNearTopEntryIdsRef.current.add(entry.id)
           logNotificationHook("queue_near_top", {
             roomId,
             queueEntryId: entry.id,
@@ -1232,6 +1230,7 @@ export default function QueuesPage() {
 
       if (poolRoomIds.length === 0) {
         setSharedPoolEntries([])
+        isFetchingQueueRef.current = false
         return
       }
 
@@ -1245,6 +1244,7 @@ export default function QueuesPage() {
 
       if (sharedError || !sharedData) {
         setSharedPoolEntries([])
+        isFetchingQueueRef.current = false
         return
       }
 
@@ -1273,6 +1273,7 @@ export default function QueuesPage() {
           }
         })
       )
+      isFetchingQueueRef.current = false
     },
     [allRooms, logNotificationHook, supabase]
   )
@@ -1292,9 +1293,11 @@ export default function QueuesPage() {
     if (!selectedRoomId) return
     void fetchQueue(selectedRoomId)
 
+    // 30 s is plenty: Supabase realtime already handles immediate updates.
+    // A short interval was the main source of extra requests.
     const interval = setInterval(() => {
       void fetchQueue(selectedRoomId)
-    }, 5000)
+    }, 30000)
 
     return () => clearInterval(interval)
   }, [fetchQueue, selectedRoomId])
@@ -3240,15 +3243,6 @@ export default function QueuesPage() {
         .eq("id", targetEntry.id)
 
       if (error) throw error
-
-      logNotificationHook("presentation_now", {
-        roomId: selectedRoomId,
-        queueEntryId: targetEntry.id,
-        submissionId: targetEntry.submission_id,
-        teamNumber: targetEntry.submissions.number,
-        teamTitle: targetEntry.submissions.title,
-        source: "startPresentation"
-      })
 
       toast.success(
         `Presentation started for group #${targetEntry.submissions.number}`
