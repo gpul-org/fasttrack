@@ -36,15 +36,43 @@ export async function getMembers(): Promise<Map<string, string>> {
   )
 }
 
-let memberMap: Map<string, string> | null
+// Singleton promise to avoid concurrent getMembers() calls racing and
+// hammering the Discord API (which causes rate-limit drops).
+let memberMapPromise: Promise<Map<string, string>> | null = null
+function ensureMemberMap(): Promise<Map<string, string>> {
+  if (!memberMapPromise) {
+    memberMapPromise = getMembers().catch((err) => {
+      // Reset so the next call retries instead of caching the failure.
+      memberMapPromise = null
+      throw err
+    })
+  }
+  return memberMapPromise
+}
+
+// Sequential queue so rapid-fire calls don't run concurrently – each message
+// waits for the previous one to finish (including Discord rate-limit back-off
+// handled internally by @discordjs/rest).
+let sendQueue: Promise<void> = Promise.resolve()
+
 export async function sendMessage(
   message: string,
   participants: Array<string | { handle: string; name?: string }>,
   embed?: DiscordEmbedPayload
 ) {
-  if (!memberMap) {
-    memberMap = await getMembers()
-  }
+  // Chain onto the queue so sends are serialized.
+  const task = sendQueue.then(() => doSendMessage(message, participants, embed))
+  // Keep the queue alive even if one message fails.
+  sendQueue = task.catch(() => {})
+  return task
+}
+
+async function doSendMessage(
+  message: string,
+  participants: Array<string | { handle: string; name?: string }>,
+  embed?: DiscordEmbedPayload
+) {
+  const memberMap = await ensureMemberMap()
 
   const normalized = participants
     .map((p) =>
@@ -52,7 +80,7 @@ export async function sendMessage(
         ? { handle: p.trim(), name: p.trim() }
         : { handle: p.handle.trim(), name: (p.name || p.handle).trim() }
     )
-    .filter((p) => p.handle)
+    .filter((p) => p.handle || p.name)
 
   if (normalized.length === 0) {
     return
@@ -63,14 +91,18 @@ export async function sendMessage(
   const resolvedIds: string[] = []
 
   for (const p of normalized) {
-    const memberId = memberMap!.get(p.handle)
+    const memberId = p.handle ? memberMap.get(p.handle) : undefined
     if (memberId) {
       if (!resolvedIds.includes(memberId)) {
         resolvedIds.push(memberId)
         mentionStrings.push(`<@${memberId}>`)
       }
     } else {
-      nameFallbacks.push(p.handle)
+      // Use the human-readable name (not the handle) as fallback text.
+      const label = p.name || p.handle
+      if (label && !nameFallbacks.includes(label)) {
+        nameFallbacks.push(label)
+      }
     }
   }
 

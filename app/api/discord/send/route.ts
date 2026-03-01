@@ -116,7 +116,7 @@ export async function POST(request: Request) {
       .map((participant) => participant.trim())
       .filter(Boolean)
 
-    const fromSubmission: string[] = []
+    const fromSubmission: Array<{ handle: string; name: string }> = []
     if (body.submissionId) {
       const { data: links, error: linksError } = await supabase
         .from("submission_participants")
@@ -138,22 +138,47 @@ export async function POST(request: Request) {
 
         if (!participantRecord || typeof participantRecord !== "object") return
 
-        const handle = extractDiscordHandle(
-          participantRecord as Record<string, unknown>
-        )
+        const rec = participantRecord as Record<string, unknown>
+        const handle = extractDiscordHandle(rec) || ""
+        const firstName =
+          typeof rec.first_name === "string" ? rec.first_name.trim() : ""
+        const lastName =
+          typeof rec.last_name === "string" ? rec.last_name.trim() : ""
+        const fullName =
+          [firstName, lastName].filter(Boolean).join(" ") || handle
 
-        if (handle) {
-          fromSubmission.push(handle)
+        // Always include every team member – if they have no discord handle
+        // their name will still appear in the notification text.
+        if (handle || fullName) {
+          fromSubmission.push({ handle, name: fullName })
         }
       })
     }
 
-    const participants = Array.from(
-      new Set([...fromRequest, ...fromSubmission])
-    )
+    // Merge fromRequest (plain handles) and fromSubmission ({handle, name}),
+    // deduplicating by handle when present, or by name otherwise.
+    const seenKeys = new Set<string>()
+    const participants: Array<string | { handle: string; name: string }> = []
+    for (const handle of fromRequest) {
+      if (!seenKeys.has(handle)) {
+        seenKeys.add(handle)
+        participants.push(handle)
+      }
+    }
+    for (const p of fromSubmission) {
+      const dedupeKey = p.handle || p.name
+      if (dedupeKey && !seenKeys.has(dedupeKey)) {
+        seenKeys.add(dedupeKey)
+        participants.push(p)
+      }
+    }
 
     if (participants.length === 0) {
-      return NextResponse.json({ ok: true, sent: false, reason: "no-handles" })
+      return NextResponse.json({
+        ok: true,
+        sent: false,
+        reason: "no-participants"
+      })
     }
 
     await sendMessage(message, participants, embed)
