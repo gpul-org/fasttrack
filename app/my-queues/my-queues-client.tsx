@@ -213,7 +213,7 @@ async function findParticipantsByEmail(
 
   const { data: exactMatches } = await supabase
     .from("participants")
-    .select("id, email")
+    .select("id, email, discord_username")
     .ilike("email", normalized)
 
   const exact = (exactMatches || []).filter(
@@ -224,7 +224,7 @@ async function findParticipantsByEmail(
 
   const { data: fuzzyMatches } = await supabase
     .from("participants")
-    .select("id, email")
+    .select("id, email, discord_username")
     .ilike("email", `%${normalized}%`)
 
   if (!fuzzyMatches || fuzzyMatches.length === 0) return []
@@ -250,6 +250,7 @@ export default function MyQueuesClient() {
 
   const [loading, setLoading] = useState(false)
   const [participantFound, setParticipantFound] = useState(true)
+  const [discordUsername, setDiscordUsername] = useState<string | null>(null)
   const latestFetchIdRef = useRef(0)
 
   const [submissions, setSubmissions] = useState<Submission[]>([])
@@ -287,6 +288,7 @@ export default function MyQueuesClient() {
         setOwnEntries([])
         setRoomEntries([])
         setParticipantFound(true)
+        setDiscordUsername(null)
         setRoomQueueStateByRoom({})
         setRoomNameByRoom({})
         setRoomChallengeTagsByRoom({})
@@ -317,10 +319,12 @@ export default function MyQueuesClient() {
           setRoomChallengeTagsByRoom({})
           setRoomChallengeTagByRoom({})
           setGlobalScheduleEndAt(null)
+          setDiscordUsername(null)
           return
         }
 
         setParticipantFound(true)
+        setDiscordUsername(participants[0]?.discord_username ?? null)
 
         const participantIds = Array.from(
           new Set(participants.map((participant) => participant.id))
@@ -779,6 +783,27 @@ export default function MyQueuesClient() {
           </form>
         </CardContent>
       </Card>
+
+      {resolvedEmail && participantFound && !loading && (
+        <Card>
+          <CardContent className="space-y-1 pt-6">
+            <p className="text-sm">
+              <span className="text-muted-foreground">
+                Discord notifications will be sent to:{" "}
+              </span>
+              {discordUsername ? (
+                <span className="font-semibold">@{discordUsername}</span>
+              ) : (
+                <span className="font-semibold text-destructive">Not set</span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              If this is not correct, please tell an organization member via
+              Discord.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {!resolvedEmail ? (
         <Card>

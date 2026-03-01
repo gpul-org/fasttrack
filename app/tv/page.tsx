@@ -527,8 +527,8 @@ export default function TvGeneralPage() {
     <main className="h-dvh overflow-hidden bg-slate-100">
       {/* ── Top bar ─────────────────────────────────────────────── */}
       <div className="flex h-[10%] items-center justify-between px-6">
-        <h1 className="text-2xl font-black tracking-tight text-slate-800">
-          FastTrack
+        <h1 className="text-4xl font-black tracking-tight text-slate-800">
+          FastTrack – HackUDC 2026
         </h1>
         <div className="flex items-center gap-3">
           {hiddenRoomCount > 0 && (

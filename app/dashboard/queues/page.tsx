@@ -39,6 +39,7 @@ import {
   Download,
   FastForward,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   SkipForward
@@ -454,21 +455,6 @@ function normalizeQueueReviews(raw: unknown): QueueReview[] {
   })
 }
 
-function _getDiscordHandleFromParticipant(
-  participant: SubmissionParticipant["participants"]
-): string | null {
-  const value =
-    participant.discord_username ||
-    participant.discord_user ||
-    participant.discord ||
-    null
-
-  if (!value) return null
-
-  const normalized = value.trim()
-  return normalized.length > 0 ? normalized : null
-}
-
 export default function QueuesPage() {
   const supabase = useMemo(() => createClient(), [])
   const [loading, setLoading] = useState(true)
@@ -491,13 +477,13 @@ export default function QueuesPage() {
 
   const [showCallGroupDialog, setShowCallGroupDialog] = useState(false)
   const [showReviewedDialog, setShowReviewedDialog] = useState(false)
-  const [_reviewedEditMode, setReviewedEditMode] = useState(false)
-  const [reviewedEditScore, _setReviewedEditScore] = useState("0")
-  const [reviewedEditNotes, _setReviewedEditNotes] = useState("")
-  const [reviewedEditAnswers, _setReviewedEditAnswers] = useState<
+  const [reviewedEditMode, setReviewedEditMode] = useState(false)
+  const [reviewedEditScore, setReviewedEditScore] = useState("0")
+  const [reviewedEditNotes, setReviewedEditNotes] = useState("")
+  const [reviewedEditAnswers, setReviewedEditAnswers] = useState<
     ReviewAnswer[]
   >([])
-  const [_isSavingReviewedEdit, setIsSavingReviewedEdit] = useState(false)
+  const [isSavingReviewedEdit, setIsSavingReviewedEdit] = useState(false)
   const [isExportingReviews, setIsExportingReviews] = useState(false)
   const [groupSearch, setGroupSearch] = useState("")
   const [reviewedSearch, setReviewedSearch] = useState("")
@@ -730,7 +716,7 @@ export default function QueuesPage() {
               {
                 name: "Next step",
                 value:
-                  "```txt\nStart getting your team ready and head to floor 3.\n```",
+                  "```txt\nStart getting your team ready and head to floor 2.\n```",
                 inline: false
               }
             ],
@@ -2233,7 +2219,7 @@ export default function QueuesPage() {
     setIsExportingReviews(false)
   }, [activeChallenge, reviewedBaseEntries, reviewedScope, userId])
 
-  const _handleSaveReviewedEdit = useCallback(async () => {
+  const handleSaveReviewedEdit = useCallback(async () => {
     if (!selectedReviewedEntry || !userId) return
     setIsSavingReviewedEdit(true)
     try {
@@ -2263,6 +2249,9 @@ export default function QueuesPage() {
       }
       toast.success("Review saved")
       setReviewedEditMode(false)
+      if (selectedRoomId) {
+        await fetchQueue(selectedRoomId)
+      }
     } catch (err) {
       toast.error("Failed to save review")
       console.error(err)
@@ -2274,7 +2263,9 @@ export default function QueuesPage() {
     reviewedEditScore,
     reviewedEditNotes,
     reviewedEditAnswers,
-    saveQueueReview
+    saveQueueReview,
+    selectedRoomId,
+    fetchQueue
   ])
 
   useEffect(() => {
@@ -3902,7 +3893,7 @@ export default function QueuesPage() {
                 )}
                 {desiredTimeConstrained && (
                   <p className="text-xs font-medium text-amber-600">
-                    Target reduced to fit remaining window.
+                    Adjusted down to fit the remaining evaluation window
                   </p>
                 )}
               </div>
@@ -4444,8 +4435,8 @@ export default function QueuesPage() {
                     )}
                     {desiredTimeConstrained && (
                       <p className="text-xs font-medium text-amber-600">
-                        Desired target is currently constrained by remaining
-                        window.
+                        Time has been adjusted down — the evaluation window is
+                        tighter than expected.
                       </p>
                     )}
                   </div>
@@ -4701,15 +4692,174 @@ export default function QueuesPage() {
                     reviewedScope
                   )
 
+                  const enterEditMode = () => {
+                    setReviewedEditScore(String(selectedReview?.score ?? 0))
+                    setReviewedEditNotes(selectedReview?.notes ?? "")
+                    setReviewedEditAnswers(selectedReview?.answers ?? [])
+                    setReviewedEditMode(true)
+                  }
+
+                  if (reviewedEditMode) {
+                    return (
+                      <div className="space-y-4 text-sm">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-1">
+                            <p className="text-xs text-muted-foreground">
+                              Team
+                            </p>
+                            <p className="text-base font-semibold">
+                              #{selectedReviewedEntry.submissions.number} ·{" "}
+                              {selectedReviewedEntry.submissions.title ||
+                                "Untitled"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label htmlFor="edit-review-score">
+                            Score (0–10)
+                          </Label>
+                          <Input
+                            id="edit-review-score"
+                            type="number"
+                            min={0}
+                            max={10}
+                            value={reviewedEditScore}
+                            onChange={(e) =>
+                              setReviewedEditScore(e.target.value)
+                            }
+                            disabled={isSavingReviewedEdit}
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <Label htmlFor="edit-review-notes">Notes</Label>
+                          <textarea
+                            id="edit-review-notes"
+                            className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                            rows={3}
+                            value={reviewedEditNotes}
+                            onChange={(e) =>
+                              setReviewedEditNotes(e.target.value)
+                            }
+                            disabled={isSavingReviewedEdit}
+                          />
+                        </div>
+
+                        {reviewedEditAnswers.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              Challenge answers
+                            </p>
+                            {reviewedEditAnswers.map((answer, idx) => (
+                              <div key={answer.label} className="space-y-1">
+                                <Label>{answer.label}</Label>
+                                {answer.type === "boolean" ? (
+                                  <div className="flex items-center gap-2">
+                                    <Checkbox
+                                      checked={answer.value === true}
+                                      onCheckedChange={(checked) => {
+                                        setReviewedEditAnswers((prev) => {
+                                          const next = [...prev]
+                                          next[idx] = {
+                                            ...next[idx],
+                                            value: Boolean(checked)
+                                          }
+                                          return next
+                                        })
+                                      }}
+                                      disabled={isSavingReviewedEdit}
+                                    />
+                                    <span className="text-sm">
+                                      {answer.value ? "Yes" : "No"}
+                                    </span>
+                                  </div>
+                                ) : answer.type === "number" ? (
+                                  <Input
+                                    type="number"
+                                    value={String(answer.value ?? "")}
+                                    onChange={(e) => {
+                                      setReviewedEditAnswers((prev) => {
+                                        const next = [...prev]
+                                        next[idx] = {
+                                          ...next[idx],
+                                          value:
+                                            e.target.value === ""
+                                              ? null
+                                              : Number(e.target.value)
+                                        }
+                                        return next
+                                      })
+                                    }}
+                                    disabled={isSavingReviewedEdit}
+                                  />
+                                ) : (
+                                  <textarea
+                                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                                    rows={2}
+                                    value={String(answer.value ?? "")}
+                                    onChange={(e) => {
+                                      setReviewedEditAnswers((prev) => {
+                                        const next = [...prev]
+                                        next[idx] = {
+                                          ...next[idx],
+                                          value: e.target.value
+                                        }
+                                        return next
+                                      })
+                                    }}
+                                    disabled={isSavingReviewedEdit}
+                                  />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={handleSaveReviewedEdit}
+                            disabled={isSavingReviewedEdit}
+                          >
+                            {isSavingReviewedEdit ? (
+                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                            ) : null}
+                            Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setReviewedEditMode(false)}
+                            disabled={isSavingReviewedEdit}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  }
+
                   return (
                     <div className="space-y-4 text-sm">
-                      <div className="space-y-1">
-                        <p className="text-xs text-muted-foreground">Team</p>
-                        <p className="text-base font-semibold">
-                          #{selectedReviewedEntry.submissions.number} ·{" "}
-                          {selectedReviewedEntry.submissions.title ||
-                            "Untitled"}
-                        </p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Team</p>
+                          <p className="text-base font-semibold">
+                            #{selectedReviewedEntry.submissions.number} ·{" "}
+                            {selectedReviewedEntry.submissions.title ||
+                              "Untitled"}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={enterEditMode}
+                          title="Edit review"
+                        >
+                          <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                          Edit
+                        </Button>
                       </div>
 
                       <div className="space-y-2">
